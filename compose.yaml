@@ -1,0 +1,22 @@
+services:
+  llama-server:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - /home/zbloss/models:/models:ro
+      - ./models/config.ini:/config.ini:ro
+    command: >-
+      --models-preset /config.ini
+      --models-max 1
+      --host 0.0.0.0
+      --port 8080
+      --api-key ${LLAMA_API_KEY}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
