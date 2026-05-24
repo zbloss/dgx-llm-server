@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 """
-Syncs model files on the DGX Spark with the manifest in models/models.json.
-- Downloads any model listed in the manifest that is not yet on disk.
-- Removes any .gguf file on disk that is no longer listed in the manifest.
+Syncs NVFP4 model repos on the DGX Spark with the manifest in models/models.json.
+- Downloads any HuggingFace repo listed in the manifest that is not yet on disk.
+- Removes any model directory on disk that is no longer listed in the manifest.
 
 Run by the GitHub Actions self-hosted runner after each push that touches
-models/models.json or models/config.ini.
+models/models.json or compose.yaml.
 """
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 
-from huggingface_hub import hf_hub_download
+from huggingface_hub import snapshot_download
 
 MODELS_DIR = Path(os.environ.get("MODELS_DIR", "/home/zbloss/models"))
 MANIFEST = Path(__file__).parent.parent / "models" / "models.json"
@@ -23,39 +24,34 @@ def load_manifest():
         return json.load(f)["models"]
 
 
-def filenames(model: dict) -> list[str]:
-    """Normalise hf_filename (str) or hf_filenames (list) to a list."""
-    if "hf_filenames" in model:
-        return model["hf_filenames"]
-    return [model["hf_filename"]]
-
-
-def download_file(repo: str, filename: str) -> None:
-    print(f"[download] {repo}/{filename}")
-    hf_hub_download(
-        repo_id=repo,
-        filename=filename,
-        local_dir=str(MODELS_DIR),
-        token=os.environ.get("HF_TOKEN"),
-    )
+def local_dir(hf_repo: str) -> Path:
+    return MODELS_DIR / hf_repo.replace("/", "--")
 
 
 def sync() -> None:
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     models = load_manifest()
-    desired = {f for m in models for f in filenames(m)}
+    desired = {local_dir(m["hf_repo"]).name for m in models}
 
     for model in models:
-        for fname in filenames(model):
-            if (MODELS_DIR / fname).exists():
-                print(f"[ok] {fname}")
-            else:
-                download_file(model["hf_repo"], fname)
+        dest = local_dir(model["hf_repo"])
+        if dest.exists():
+            print(f"[ok] {dest.name}")
+        else:
+            print(f"[download] {model['hf_repo']} → {dest}")
+            snapshot_download(
+                repo_id=model["hf_repo"],
+                local_dir=str(dest),
+                token=os.environ.get("HF_TOKEN"),
+            )
 
-    for gguf in sorted(MODELS_DIR.glob("*.gguf")):
-        if gguf.name not in desired:
-            print(f"[remove] {gguf.name}")
-            gguf.unlink()
+    for entry in sorted(MODELS_DIR.iterdir()):
+        if entry.is_dir() and entry.name not in desired:
+            print(f"[remove] {entry.name}")
+            shutil.rmtree(entry)
+        elif entry.is_file() and entry.suffix == ".gguf":
+            print(f"[remove] {entry.name}")
+            entry.unlink()
 
 
 if __name__ == "__main__":
