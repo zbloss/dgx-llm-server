@@ -1,0 +1,17 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: dgx-llm-server
+  namespace: llm-server
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`dgx.blosshomelab.com`)
+      kind: Rule
+      services:
+        - name: dgx-llm-server
+          port: 8080
+  tls:
+    # Replace with your Traefik cert resolver name.
+    certResolver: default

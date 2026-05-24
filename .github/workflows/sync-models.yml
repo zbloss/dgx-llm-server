@@ -1,0 +1,34 @@
+name: Sync Models
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - models/config.ini
+      - models/models.json
+      - compose.yaml
+  workflow_dispatch:
+
+jobs:
+  sync:
+    name: Sync model files and restart server
+    runs-on: [self-hosted, dgx-spark]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          # Install a specific version of uv.
+          version: "0.11.16"
+
+      - name: Sync model files
+        run: uv run scripts/sync_models.py
+        env:
+          MODELS_DIR: /home/zbloss/models
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+
+      - name: Apply compose changes
+        run: docker compose up -d
