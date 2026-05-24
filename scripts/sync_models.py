@@ -9,9 +9,10 @@ models/models.json or models/config.ini.
 """
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
+
+from huggingface_hub import hf_hub_download
 
 MODELS_DIR = Path(os.environ.get("MODELS_DIR", "/home/zbloss/models"))
 MANIFEST = Path(__file__).parent.parent / "models" / "models.json"
@@ -31,17 +32,12 @@ def filenames(model: dict) -> list[str]:
 
 def download_file(repo: str, filename: str) -> None:
     print(f"[download] {repo}/{filename}")
-    cmd = [
-        "huggingface-cli", "download",
-        repo,
-        filename,
-        "--local-dir", str(MODELS_DIR),
-        "--local-dir-use-symlinks", "False",
-    ]
-    token = os.environ.get("HF_TOKEN")
-    if token:
-        cmd += ["--token", token]
-    subprocess.run(cmd, check=True)
+    hf_hub_download(
+        repo_id=repo,
+        filename=filename,
+        local_dir=str(MODELS_DIR),
+        token=os.environ.get("HF_TOKEN"),
+    )
 
 
 def sync() -> None:
@@ -65,6 +61,6 @@ def sync() -> None:
 if __name__ == "__main__":
     try:
         sync()
-    except subprocess.CalledProcessError as e:
+    except Exception as e:
         print(f"error: {e}", file=sys.stderr)
         sys.exit(1)
