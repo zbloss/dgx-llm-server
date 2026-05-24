@@ -32,3 +32,5 @@ jobs:
 
       - name: Apply compose changes
         run: docker compose up -d
+        env:
+          LLAMA_API_KEY: ${{ secrets.LLAMA_API_KEY }}
