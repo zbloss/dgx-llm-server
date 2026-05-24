@@ -42,18 +42,46 @@ docker compose up -d
 ```
 The server starts but no model is loaded yet — models are downloaded by the first GitHub Actions run or on first client request (if files are already on disk).
 
-**4. Apply the K8s manifests:**
+**4. Enable the systemd service so the stack starts on boot:**
+
+Create `/etc/systemd/system/dgx-llm-server.service`:
+```ini
+[Unit]
+Description=DGX LLM Server (llama.cpp docker compose stack)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/home/zbloss/Projects/dgx-llm-server
+EnvironmentFile=/home/zbloss/Projects/dgx-llm-server/.env
+ExecStart=/usr/bin/docker compose up -d --remove-orphans
+ExecStop=/usr/bin/docker compose down
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target
+```
+Then enable it:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now dgx-llm-server.service
+```
+
+**5. Apply the K8s manifests:**
 ```bash
 # Fill in the DGX Spark's actual fixed IP in k8s/external-service.yaml first
 # Fill in your Traefik cert resolver name in k8s/ingress-route.yaml
 kubectl apply -f k8s/
 ```
 
-**5. Add your HuggingFace token as a GitHub Actions secret** (required to download models):
+**6. Add your HuggingFace token as a GitHub Actions secret** (required to download models):
 
 Repo → Settings → Secrets and variables → Actions → New repository secret → `HF_TOKEN`
 
-**6. Trigger the first model download:**
+**7. Trigger the first model download:**
 
 Push any change to `models/models.json` or run the workflow manually from the Actions tab.
 
