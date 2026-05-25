@@ -31,6 +31,16 @@ Serves quantized LLMs from a DGX Spark over the local network via an OpenAI-comp
 Go to your GitHub repo → Settings → Actions → Runners → New self-hosted runner.
 Follow the instructions, and when prompted for labels add `dgx-spark`.
 
+**2. Create `.env` with your LiteLLM secrets:**
+```bash
+cp .env.example .env
+# Edit .env and set both values to strong random strings
+```
+
+`LITELLM_MASTER_KEY` is the API key clients will use to authenticate. `LITELLM_SALT_KEY` is used internally by LiteLLM to encrypt stored credentials — set it once and never change it (rotating it invalidates any stored keys in the database).
+
+These values stay on the DGX Spark only. Docker Compose reads `.env` automatically and they never need to go through GitHub.
+
 **3. Start the server manually for the first run:**
 ```bash
 docker compose up -d
@@ -107,12 +117,12 @@ Context window: **262,144 tokens** for both. KV cache: FP8. Both models are resi
 
 ## Client configuration
 
-All clients use `https://dgx.blosshomelab.com` as the base URL. No authentication is required. Clients that require a non-empty API key field (like the OpenAI SDK) can pass any non-empty string.
+All clients use `https://dgx.blosshomelab.com` as the base URL and the `LITELLM_MASTER_KEY` value from `.env` as the API key.
 
 **Claude Code / shell environment:**
 ```bash
 export OPENAI_BASE_URL=https://dgx.blosshomelab.com/v1
-export OPENAI_API_KEY=local
+export OPENAI_API_KEY=your-litellm-master-key
 ```
 
 **Pi.dev (`~/.config/pi/models.json`):**
@@ -122,7 +132,7 @@ export OPENAI_API_KEY=local
     "name": "dgx-spark",
     "type": "openai",
     "baseUrl": "https://dgx.blosshomelab.com/v1",
-    "apiKey": "local",
+    "apiKey": "your-litellm-master-key",
     "models": ["qwen3.6-35b-a3b", "qwen3.6-27b"]
   }]
 }
@@ -134,7 +144,7 @@ from openai import OpenAI
 
 client = OpenAI(
     base_url="https://dgx.blosshomelab.com/v1",
-    api_key="local",
+    api_key="your-litellm-master-key",
 )
 response = client.chat.completions.create(
     model="qwen3.6-35b-a3b",
@@ -148,7 +158,10 @@ env:
   - name: OPENAI_BASE_URL
     value: "https://dgx.blosshomelab.com/v1"
   - name: OPENAI_API_KEY
-    value: "local"
+    valueFrom:
+      secretKeyRef:
+        name: dgx-llm-api-key
+        key: key
 ```
 
 ---
@@ -172,7 +185,7 @@ The `GPU blocks` log line tells you the total KV cache capacity. Multiply by 16 
 | `compose.yaml` | Docker Compose: two vLLM instances + LiteLLM proxy |
 | `litellm/config.yaml` | LiteLLM routing: maps canonical model names to vLLM backends |
 | `models/models.json` | GitOps manifest: HuggingFace repo sources for each model |
-| `.env` | API key (gitignored — copy from `.env.example`) |
+| `.env` | LiteLLM secrets: `LITELLM_MASTER_KEY` (client auth) and `LITELLM_SALT_KEY` (internal encryption). Lives on DGX Spark only — never committed or pushed to GitHub. Copy from `.env.example`. |
 | `k8s/external-service.yaml` | K8s Service + Endpoints pointing to DGX Spark IP |
 | `k8s/ingress-route.yaml` | Traefik IngressRoute for `dgx.blosshomelab.com` |
 | `.github/workflows/sync-models.yml` | GitOps workflow (runs on DGX Spark self-hosted runner) |
