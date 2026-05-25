@@ -11,5 +11,4 @@ model_list:
       api_base: http://vllm-27b:8000/v1
       api_key: none
 
-general_settings:
-  database_url: "postgresql://llmproxy:dbpassword9090@db:5432/litellm"
+general_settings: {}
