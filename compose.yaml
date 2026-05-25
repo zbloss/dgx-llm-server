@@ -7,10 +7,9 @@ services:
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
     command: --config /app/config.yaml
+    env_file:
+      - .env
     environment:
-      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
-      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY}
-      DATABASE_URL: "postgresql://llmproxy:${LITELLM_DB_PASSWORD}@db:5432/litellm"
       STORE_MODEL_IN_DB: "True"
     depends_on:
       db:
