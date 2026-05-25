@@ -1,12 +1,15 @@
 services:
   litellm:
-    image: ghcr.io/berriai/litellm:v1.86.0
+    image: ghcr.io/berriai/litellm-database:v1.86.0
     restart: unless-stopped
     ports:
       - "8080:4000"
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
     command: --config /app/config.yaml
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      LITELLM_SALT_KEY: ${LITELLM_SALT_KEY}
     depends_on:
       - vllm-35b
       - vllm-27b
@@ -27,6 +30,9 @@ services:
       --trust-remote-code
       --host 0.0.0.0
       --port 8000
+      --reasoning-parser qwen3
+      --tool-call-parser qwen3_coder
+      --moe_backend flashinfer_cutlass
     ipc: host
     deploy:
       resources:
