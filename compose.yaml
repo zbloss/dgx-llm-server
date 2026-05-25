@@ -61,7 +61,14 @@ services:
       --reasoning-parser qwen3
       --tool-call-parser qwen3_coder
       --moe_backend flashinfer_cutlass
+      --max-num-seqs 8
     ipc: host
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 300s
     deploy:
       resources:
         reservations:
@@ -73,6 +80,9 @@ services:
   vllm-27b:
     image: vllm/vllm-openai:v0.21.0
     restart: unless-stopped
+    depends_on:
+      vllm-35b:
+        condition: service_healthy
     ports:
       - "8002:8000"
     volumes:
@@ -80,12 +90,13 @@ services:
     command: >-
       --model /models/unsloth--Qwen3.6-27B-NVFP4
       --served-model-name qwen3.6-27b
-      --gpu-memory-utilization 0.45
+      --gpu-memory-utilization 0.93
       --max-model-len 262144
       --kv-cache-dtype fp8
       --trust-remote-code
       --host 0.0.0.0
       --port 8000
+      --max-num-seqs 8
     ipc: host
     deploy:
       resources:
