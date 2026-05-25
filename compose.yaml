@@ -52,7 +52,7 @@ services:
     command: >-
       --model /models/RedHatAI--Qwen3.6-35B-A3B-NVFP4
       --served-model-name qwen3.6-35b-a3b
-      --gpu-memory-utilization 0.50
+      --gpu-memory-utilization 0.45
       --max-model-len 262144
       --kv-cache-dtype fp8
       --trust-remote-code
@@ -90,7 +90,7 @@ services:
     command: >-
       --model /models/unsloth--Qwen3.6-27B-NVFP4
       --served-model-name qwen3.6-27b
-      --gpu-memory-utilization 0.93
+      --gpu-memory-utilization 0.40
       --max-model-len 262144
       --kv-cache-dtype fp8
       --trust-remote-code
