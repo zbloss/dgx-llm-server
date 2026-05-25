@@ -1,6 +1,6 @@
 services:
   litellm:
-    image: ghcr.io/berriai/litellm-database:v1.86.0
+    image: ghcr.io/berriai/litellm:v1.86.0
     restart: unless-stopped
     ports:
       - "8080:4000"
@@ -10,9 +10,37 @@ services:
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
       LITELLM_SALT_KEY: ${LITELLM_SALT_KEY}
+      DATABASE_URL: "postgresql://llmproxy:${LITELLM_DB_PASSWORD}@db:5432/litellm"
+      STORE_MODEL_IN_DB: "True"
     depends_on:
-      - vllm-35b
-      - vllm-27b
+      db:
+        condition: service_healthy
+      vllm-35b:
+        condition: service_started
+      vllm-27b:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health/liveliness"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  db:
+    image: postgres:16
+    container_name: litellm_db
+    restart: always
+    environment:
+      POSTGRES_DB: litellm
+      POSTGRES_USER: llmproxy
+      POSTGRES_PASSWORD: ${LITELLM_DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d litellm -U llmproxy"]
+      interval: 1s
+      timeout: 5s
+      retries: 10
 
   vllm-35b:
     image: nvcr.io/nvidia/vllm:26.04-py3
@@ -66,3 +94,6 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+
+volumes:
+  postgres_data:
