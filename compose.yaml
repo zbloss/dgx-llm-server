@@ -1,18 +1,58 @@
 services:
-  llama-server:
-    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+  litellm:
+    image: ghcr.io/berriai/litellm:v1.86.0
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "8080:4000"
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+    command: --config /app/config.yaml
+    depends_on:
+      - vllm-35b
+      - vllm-27b
+
+  vllm-35b:
+    image: nvcr.io/nvidia/vllm:26.04-py3
+    restart: unless-stopped
+    ports:
+      - "8001:8000"
     volumes:
       - /home/zbloss/models:/models:ro
-      - ./models/config.ini:/config.ini:ro
     command: >-
-      --models-preset /config.ini
-      --models-max 1
+      --model /models/RedHatAI--Qwen3.6-35B-A3B-NVFP4
+      --served-model-name qwen3.6-35b-a3b
+      --gpu-memory-utilization 0.50
+      --max-model-len 262144
+      --kv-cache-dtype fp8
+      --trust-remote-code
       --host 0.0.0.0
-      --port 8080
-      --api-key ${LLAMA_API_KEY}
+      --port 8000
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  vllm-27b:
+    image: nvcr.io/nvidia/vllm:26.04-py3
+    restart: unless-stopped
+    ports:
+      - "8002:8000"
+    volumes:
+      - /home/zbloss/models:/models:ro
+    command: >-
+      --model /models/unsloth--Qwen3.6-27B-NVFP4
+      --served-model-name qwen3.6-27b
+      --gpu-memory-utilization 0.45
+      --max-model-len 262144
+      --kv-cache-dtype fp8
+      --trust-remote-code
+      --host 0.0.0.0
+      --port 8000
+    ipc: host
     deploy:
       resources:
         reservations:
