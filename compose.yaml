@@ -43,7 +43,7 @@ services:
       retries: 10
 
   vllm-35b:
-    image: nvcr.io/nvidia/vllm:26.04-py3
+    image: vllm/vllm-openai:v0.21.0
     restart: unless-stopped
     ports:
       - "8001:8000"
@@ -71,7 +71,7 @@ services:
               capabilities: [gpu]
 
   vllm-27b:
-    image: nvcr.io/nvidia/vllm:26.04-py3
+    image: vllm/vllm-openai:v0.21.0
     restart: unless-stopped
     ports:
       - "8002:8000"
