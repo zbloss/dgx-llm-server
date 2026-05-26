@@ -14,9 +14,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      vllm-35b:
-        condition: service_started
-      vllm-27b:
+      vllm-nemotron:
         condition: service_started
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness')"]
@@ -41,65 +39,52 @@ services:
       timeout: 5s
       retries: 10
 
-  vllm-35b:
+  vllm-nemotron:
     image: vllm/vllm-openai:v0.21.0
     restart: unless-stopped
     ports:
       - "8001:8000"
     volumes:
-      - /home/zbloss/models:/models:ro
+      - /home/zbloss/.cache/huggingface:/root/.cache/huggingface
+      - ./super_v3_reasoning_parser.py:/app/super_v3_reasoning_parser.py
+    env_file:
+      - .env
+    environment:
+      VLLM_NVFP4_GEMM_BACKEND: marlin
+      VLLM_ALLOW_LONG_MAX_MODEL_LEN: "1"
+      VLLM_FLASHINFER_ALLREDUCE_BACKEND: trtllm
+      VLLM_USE_FLASHINFER_MOE_FP4: "0"
     command: >-
-      --model /models/RedHatAI--Qwen3.6-35B-A3B-NVFP4
-      --served-model-name qwen3.6-35b-a3b
-      --gpu-memory-utilization 0.45
-      --max-model-len 262144
-      --kv-cache-dtype fp8
-      --trust-remote-code
+      --model nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
+      --served-model-name nvidia/nemotron-3-super
       --host 0.0.0.0
       --port 8000
-      --reasoning-parser qwen3
+      --async-scheduling
+      --dtype auto
+      --kv-cache-dtype fp8
+      --tensor-parallel-size 1
+      --pipeline-parallel-size 1
+      --data-parallel-size 1
+      --trust-remote-code
+      --gpu-memory-utilization 0.90
+      --enable-chunked-prefill
+      --max-num-seqs 12
+      --max-model-len 262144
+      --moe-backend marlin
+      --mamba_ssm_cache_dtype float16
+      --quantization fp4
+      --speculative_config '{"method":"mtp","num_speculative_tokens":3,"moe_backend":"triton"}'
+      --reasoning-parser-plugin /app/super_v3_reasoning_parser.py
+      --reasoning-parser super_v3
       --enable-auto-tool-choice
       --tool-call-parser qwen3_coder
-      --moe_backend flashinfer_cutlass
-      --max-num-seqs 8
     ipc: host
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 10
-      start_period: 300s
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-
-  vllm-27b:
-    image: vllm/vllm-openai:v0.21.0
-    restart: unless-stopped
-    depends_on:
-      vllm-35b:
-        condition: service_healthy
-    ports:
-      - "8002:8000"
-    volumes:
-      - /home/zbloss/models:/models:ro
-    command: >-
-      --model /models/unsloth--Qwen3.6-27B-NVFP4
-      --served-model-name qwen3.6-27b
-      --gpu-memory-utilization 0.40
-      --max-model-len 262144
-      --kv-cache-dtype fp8
-      --trust-remote-code
-      --host 0.0.0.0
-      --port 8000
-      --enable-auto-tool-choice
-      --tool-call-parser qwen3_coder
-      --max-num-seqs 8
-    ipc: host
+      start_period: 600s
     deploy:
       resources:
         reservations:

@@ -1,14 +1,8 @@
 model_list:
-  - model_name: qwen3.6-35b-a3b
+  - model_name: nvidia/nemotron-3-super
     litellm_params:
-      model: openai/qwen3.6-35b-a3b
-      api_base: http://vllm-35b:8000/v1
-      api_key: none
-
-  - model_name: qwen3.6-27b
-    litellm_params:
-      model: openai/qwen3.6-27b
-      api_base: http://vllm-27b:8000/v1
+      model: openai/nvidia/nemotron-3-super
+      api_base: http://vllm-nemotron:8000/v1
       api_key: none
 
 general_settings: {}
