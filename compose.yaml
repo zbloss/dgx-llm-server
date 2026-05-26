@@ -45,17 +45,15 @@ services:
     ports:
       - "8001:8000"
     volumes:
-      - /home/zbloss/.cache/huggingface:/root/.cache/huggingface
+      - /home/zbloss/models:/models:ro
       - ./super_v3_reasoning_parser.py:/app/super_v3_reasoning_parser.py
-    env_file:
-      - .env
     environment:
       VLLM_NVFP4_GEMM_BACKEND: marlin
       VLLM_ALLOW_LONG_MAX_MODEL_LEN: "1"
       VLLM_FLASHINFER_ALLREDUCE_BACKEND: trtllm
       VLLM_USE_FLASHINFER_MOE_FP4: "0"
     command: >-
-      --model nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
+      --model /models/nvidia--NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
       --served-model-name nvidia/nemotron-3-super
       --host 0.0.0.0
       --port 8000
