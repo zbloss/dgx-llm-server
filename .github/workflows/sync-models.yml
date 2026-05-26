@@ -30,4 +30,4 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
 
       - name: Apply compose changes
-        run: docker compose up -d --remove-orphans
+        run: docker compose --env-file /home/zbloss/Projects/dgx-llm-server/.env up -d --remove-orphans
