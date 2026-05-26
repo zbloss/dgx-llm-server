@@ -58,6 +58,7 @@ services:
       --host 0.0.0.0
       --port 8000
       --reasoning-parser qwen3
+      --enable-auto-tool-choice
       --tool-call-parser qwen3_coder
       --moe_backend flashinfer_cutlass
       --max-num-seqs 8
@@ -95,6 +96,8 @@ services:
       --trust-remote-code
       --host 0.0.0.0
       --port 8000
+      --enable-auto-tool-choice
+      --tool-call-parser qwen3_coder
       --max-num-seqs 8
     ipc: host
     deploy:
