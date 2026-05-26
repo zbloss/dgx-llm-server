@@ -40,7 +40,7 @@ services:
       retries: 10
 
   vllm-nemotron:
-    image: vllm/vllm-openai:v0.21.0
+    image: vllm/vllm-openai:v0.20.0
     restart: unless-stopped
     ports:
       - "8001:8000"
@@ -66,10 +66,10 @@ services:
       --trust-remote-code
       --gpu-memory-utilization 0.90
       --enable-chunked-prefill
-      --max-num-seqs 12
+      --max-num-seqs 8
       --max-model-len 262144
       --moe-backend marlin
-      --mamba_ssm_cache_dtype float16
+      --mamba_ssm_cache_dtype float32
       --quantization fp4
       --speculative_config '{"method":"mtp","num_speculative_tokens":3,"moe_backend":"triton"}'
       --reasoning-parser-plugin /app/super_v3_reasoning_parser.py
