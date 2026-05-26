@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     paths:
+      - models/models.json
       - compose.yaml
   workflow_dispatch:
 
