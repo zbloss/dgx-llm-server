@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Syncs NVFP4 model repos on the DGX Spark with the manifest in models/models.json.
+Syncs GGUF model repos on the DGX Spark with the manifest in models/models.json.
 - Downloads any HuggingFace repo listed in the manifest that is not yet on disk.
 - Removes any model directory on disk that is no longer listed in the manifest.
 
 Run by the GitHub Actions self-hosted runner after each push that touches
-models/models.json or compose.yaml.
+models/models.json, models/config.ini, or compose.yaml.
 """
 import json
 import os
@@ -43,6 +43,7 @@ def sync() -> None:
                 repo_id=model["hf_repo"],
                 local_dir=str(dest),
                 token=os.environ.get("HF_TOKEN"),
+                allow_patterns=model.get("allow_patterns"),
             )
 
     for entry in sorted(MODELS_DIR.iterdir()):

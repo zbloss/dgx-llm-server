@@ -1,88 +1,19 @@
 services:
-  litellm:
-    image: ghcr.io/berriai/litellm:v1.86.0
+  llama-server:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
     restart: unless-stopped
     ports:
-      - "8080:4000"
-    volumes:
-      - ./litellm/config.yaml:/app/config.yaml:ro
-    command: --config /app/config.yaml
-    env_file:
-      - .env
-    environment:
-      STORE_MODEL_IN_DB: "True"
-    depends_on:
-      db:
-        condition: service_healthy
-      vllm-nemotron:
-        condition: service_started
-    healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-
-  db:
-    image: postgres:16
-    container_name: litellm_db
-    restart: always
-    environment:
-      POSTGRES_DB: litellm
-      POSTGRES_USER: llmproxy
-      POSTGRES_PASSWORD: ${LITELLM_DB_PASSWORD}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -d litellm -U llmproxy"]
-      interval: 1s
-      timeout: 5s
-      retries: 10
-
-  vllm-nemotron:
-    image: vllm/vllm-openai:v0.20.0
-    restart: unless-stopped
-    ports:
-      - "8001:8000"
+      - "8080:8080"
     volumes:
       - /home/zbloss/models:/models:ro
-      - ./super_v3_reasoning_parser.py:/app/super_v3_reasoning_parser.py
-    environment:
-      VLLM_NVFP4_GEMM_BACKEND: marlin
-      VLLM_ALLOW_LONG_MAX_MODEL_LEN: "1"
-      VLLM_FLASHINFER_ALLREDUCE_BACKEND: trtllm
-      VLLM_USE_FLASHINFER_MOE_FP4: "0"
+      - ./models/config.ini:/config.ini:ro
     command: >-
-      --model /models/nvidia--NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4
-      --served-model-name nvidia/nemotron-3-super
+      --models-preset /config.ini
+      --models-max 1
       --host 0.0.0.0
-      --port 8000
-      --async-scheduling
-      --dtype auto
-      --kv-cache-dtype fp8
-      --tensor-parallel-size 1
-      --pipeline-parallel-size 1
-      --data-parallel-size 1
-      --trust-remote-code
-      --gpu-memory-utilization 0.55
-      --enable-chunked-prefill
-      --max-num-seqs 4
-      --max-model-len 131072
-      --moe-backend marlin
-      --mamba_ssm_cache_dtype float16
-      --quantization fp4
-      --speculative_config '{"method":"mtp","num_speculative_tokens":3,"moe_backend":"triton"}'
-      --reasoning-parser-plugin /app/super_v3_reasoning_parser.py
-      --reasoning-parser super_v3
-      --enable-auto-tool-choice
-      --tool-call-parser qwen3_coder
-    ipc: host
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 10
-      start_period: 600s
+      --port 8080
+      --flash-attn
+      --jinja
     deploy:
       resources:
         reservations:
@@ -90,6 +21,3 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-
-volumes:
-  postgres_data:

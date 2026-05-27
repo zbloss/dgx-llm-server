@@ -1,8 +1,0 @@
-model_list:
-  - model_name: nvidia/nemotron-3-super
-    litellm_params:
-      model: openai/nvidia/nemotron-3-super
-      api_base: http://vllm-nemotron:8000/v1
-      api_key: none
-
-general_settings: {}
