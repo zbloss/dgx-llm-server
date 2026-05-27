@@ -64,10 +64,10 @@ services:
       --pipeline-parallel-size 1
       --data-parallel-size 1
       --trust-remote-code
-      --gpu-memory-utilization 0.90
+      --gpu-memory-utilization 0.55
       --enable-chunked-prefill
       --max-num-seqs 4
-      --max-model-len 262144
+      --max-model-len 131072
       --moe-backend marlin
       --mamba_ssm_cache_dtype float16
       --quantization fp4
