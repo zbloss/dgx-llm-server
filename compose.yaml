@@ -66,10 +66,10 @@ services:
       --trust-remote-code
       --gpu-memory-utilization 0.90
       --enable-chunked-prefill
-      --max-num-seqs 8
+      --max-num-seqs 4
       --max-model-len 262144
       --moe-backend marlin
-      --mamba_ssm_cache_dtype float32
+      --mamba_ssm_cache_dtype float16
       --quantization fp4
       --speculative_config '{"method":"mtp","num_speculative_tokens":3,"moe_backend":"triton"}'
       --reasoning-parser-plugin /app/super_v3_reasoning_parser.py
