@@ -12,7 +12,7 @@ services:
       --models-max 1
       --host 0.0.0.0
       --port 8080
-      --flash-attn
+      --flash-attn on
       --jinja
       --metrics
     deploy:
