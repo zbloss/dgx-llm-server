@@ -1,0 +1,25 @@
+# WARNING: Do NOT add a ?model= query parameter to this scrape config.
+# Any request to /metrics?model=<name> acts as a model load trigger in llama-serve,
+# identical to an inference request. Doing so will cause forced model swaps on every
+# scrape interval. See ADR 0003.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: dgx-llama-cpp
+  namespace: ml
+  labels:
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames:
+      - llm-server
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dgx-llama-cpp
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+      relabelings:
+        - targetLabel: model
+          replacement: qwen3.6-27b-mtp

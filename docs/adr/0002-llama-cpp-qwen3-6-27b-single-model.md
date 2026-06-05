@@ -24,18 +24,13 @@ The advisor-escalation pattern from ADR 0001 (QA Agent escalating to a text mode
 
 ## Decision
 
-Replace the vLLM + LiteLLM stack with a single llama.cpp Server. Run Qwen3.6-27B as two Model Profiles in `models/config.ini`:
+Replace the vLLM + LiteLLM stack with a single llama.cpp Server running a single Model Profile in `models/config.ini`:
 
-**MTP Profile** — `qwen3.6-27b-mtp`
+**`qwen3.6-27b-mtp`**
 - Source: `unsloth/Qwen3.6-27B-MTP-GGUF` (UD-Q4_K_XL)
-- Flags: `--spec-type draft-mtp --spec-draft-n-max 2`
-- Used for: Phases 1–4 (planning, implementation, TDD, merge)
-- No mmproj (llama.cpp does not support `--mmproj` alongside active MTP decoding)
-
-**Vision Profile** — `qwen3.6-27b`
-- Source: `unsloth/Qwen3.6-27B-GGUF` (UD-Q4_K_XL) + `mmproj-BF16.gguf`
-- Flags: `--mmproj /models/unsloth--Qwen3.6-27B-GGUF/mmproj-BF16.gguf`
-- Used for: Phase 5 (QA Validation)
+- Flags: `--spec-type draft-mtp --spec-draft-n-max 2 --mmproj <path> --parallel 4`
+- Used for: all Agent Loop phases (Phases 1–5), including vision tasks via mmproj
+- `--parallel 4` serves 2–4 concurrent agents without serial queuing
 
 Drop LiteLLM proxy and Postgres DB entirely.
 
@@ -51,8 +46,10 @@ Drop LiteLLM proxy and Postgres DB entirely.
 
 ## Consequences
 
-- Context window increases from 131K (vLLM cap from ADR 0001) to 262K natively, with ~110 GB available for KV cache. Sessions that were already compacting at ~130K are unaffected; longer sessions gain headroom.
-- vLLM's Blackwell-optimized NVFP4 kernels are no longer used. llama.cpp's CUDA backend is less optimized for the GB10. For single-user homelab load, the throughput difference is acceptable.
-- Two GGUF downloads are required (MTP GGUF and regular GGUF) because llama.cpp does not currently support `--mmproj` alongside active MTP decoding. If a future llama.cpp release lifts this restriction, the Vision Profile can be pointed at the MTP GGUF and the second download eliminated.
+- Context window is 262K natively, with ~110 GB available for KV cache. Sessions that were already compacting at ~130K are unaffected; longer sessions gain headroom.
+- `--parallel 4` allows 2–4 concurrent agents to be served simultaneously. KV cache is unified across slots (`kv_unified = true`).
+- vLLM's Blackwell-optimized NVFP4 kernels are no longer used. llama.cpp's CUDA backend is less optimized for the GB10. MTP speculative decoding (~1.5–2× speedup on coding tasks) compensates for this on the primary workload.
+- llama.cpp supports `--mmproj` alongside active MTP decoding. A single GGUF download handles all phases including vision.
 - Docker Compose stack reduces from four services (litellm, db, vllm-nemotron, vllm-qwen3vl) to one (llama-server).
 - NVFP4 HuggingFace checkpoints are superseded by GGUF Checkpoints. The GitOps Workflow continues to manage downloads and restarts; `models/models.json` remains the source of truth for which models are active.
+- Any HTTP request to `/metrics?model=<name>` triggers a model load. Prometheus scraping must omit the `?model=` parameter. See ADR 0003.

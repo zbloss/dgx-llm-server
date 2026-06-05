@@ -10,6 +10,8 @@ kind: Service
 metadata:
   name: dgx-llm-server
   namespace: llm-server
+  labels:
+    app.kubernetes.io/name: dgx-llama-cpp
 spec:
   ports:
     - name: http

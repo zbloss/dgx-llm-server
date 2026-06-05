@@ -9,12 +9,10 @@ The NVIDIA personal AI supercomputer (GB10 Grace Blackwell) running this project
 The authoritative model format for this project. GGUF files quantized using Unsloth Dynamic 2.0 imatrix calibration (UD-Q4_K_XL), served by the llama.cpp Server. Replaced NVFP4 HuggingFace checkpoints when the project returned to llama.cpp.
 
 ### Model
-Qwen3.6-27B, a 27B dense vision-language model that handles all five phases of the Agent Loop. Served as two named Model Profiles from a single llama.cpp Server instance:
-- `qwen3.6-27b-mtp` (MTP Profile): Phases 1–4 (planning, implementation, TDD, merge). Text-only with Multi-Token Prediction speculative decoding (~1.5–2× faster inference). Source: `unsloth/Qwen3.6-27B-MTP-GGUF` (UD-Q4_K_XL). LiveCodeBench v6: 83.9%, SWE-bench Verified: 77.2%.
-- `qwen3.6-27b` (Vision Profile): Phase 5 (QA Validation). Vision-enabled via mmproj. MTP disabled (llama.cpp constraint: mmproj and active MTP decoding cannot run simultaneously). Source: `unsloth/Qwen3.6-27B-GGUF` (UD-Q4_K_XL) + mmproj-BF16.gguf.
+`qwen3.6-27b-mtp` — the single model serving all Agent Loop phases. Qwen3.6-27B dense vision-language model with Multi-Token Prediction speculative decoding (~1.5–2× faster inference) and vision via mmproj. Source: `unsloth/Qwen3.6-27B-MTP-GGUF` (UD-Q4_K_XL). LiveCodeBench v6: 83.9%, SWE-bench Verified: 77.2%.
 
 ### Model Profile
-A named section in `models/config.ini` that binds a Canonical Model Name to a GGUF Checkpoint path and its llama.cpp startup flags. The llama.cpp Server loads exactly one Model Profile at a time (`--models-max 1`). When a client requests a model name that does not match the currently-loaded profile, the server automatically unloads the current model and loads the requested one.
+The named section in `models/config.ini` that binds a Canonical Model Name to a GGUF Checkpoint path and its llama.cpp startup flags. A single profile (`qwen3.6-27b-mtp`) is active. Any HTTP request — including Prometheus scrapes with a `?model=` query parameter — acts as a model load trigger, so scraping must never reference a model name not currently loaded. See ADR 0003.
 
 ### Agent Loop
 The deterministic five-phase sequence agents run per project:
@@ -30,7 +28,7 @@ Phases 1–4 use the MTP Profile (`qwen3.6-27b-mtp`). Phase 5 uses the Vision Pr
 The agent role responsible for Phase 5 of the Agent Loop. Uses the Vision Profile as its primary model. Responsible for: iterating over API endpoints, launching a Chrome browser via MCP tools, taking and analyzing screenshots, verifying frontend correctness, and tracing E2E data flows through backend systems.
 
 ### llama.cpp Server
-A single `llama-server` container serving all agent requests via an OpenAI-compatible HTTP API on port 8080. Loads exactly one Model Profile at a time (`--models-max 1`). Clients request a model by name; the server handles loading and unloading transparently.
+A single `llama-server` container serving all agent requests via an OpenAI-compatible HTTP API on port 8080. Loads exactly one Model Profile at a time (`--models-max 1`). Auto-detects `n_parallel = 4` for concurrent request handling. Clients request a model by name; the server handles loading and unloading transparently. Any request — including Prometheus metric scrapes with a `?model=` query parameter — acts as a model load trigger. See ADR 0003.
 
 ### Models Directory
 `/home/zbloss/models` on the DGX Spark host, mounted as `/models` inside the llama.cpp Server container. Contains one subdirectory per downloaded HuggingFace repo, named with `/` replaced by `--` (e.g. `unsloth--Qwen3.6-27B-MTP-GGUF/`). Model Profiles in `config.ini` reference absolute paths within this directory.
