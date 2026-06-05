@@ -9,7 +9,7 @@ services:
       - ./models/config.ini:/config.ini:ro
     command: >-
       --models-preset /config.ini
-      --models-max 2
+      --models-max 1
       --n-gpu-layers -1
       --host 0.0.0.0
       --port 8080
