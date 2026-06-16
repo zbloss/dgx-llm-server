@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Syncs GGUF model repos on the DGX Spark with the manifest in models/models.json.
+Syncs model repos on the DGX Spark with the manifest in models/models.json.
 - Downloads any HuggingFace repo listed in the manifest that is not yet on disk.
 - Removes any model directory on disk that is no longer listed in the manifest.
 
 Run by the GitHub Actions self-hosted runner after each push that touches
-models/models.json, models/config.ini, or compose.yaml.
+models/models.json or compose.yaml.
 """
 import json
 import os
@@ -50,9 +50,6 @@ def sync() -> None:
         if entry.is_dir() and entry.name not in desired:
             print(f"[remove] {entry.name}")
             shutil.rmtree(entry)
-        elif entry.is_file() and entry.suffix == ".gguf":
-            print(f"[remove] {entry.name}")
-            entry.unlink()
 
 
 if __name__ == "__main__":

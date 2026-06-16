@@ -5,7 +5,6 @@ on:
     branches: [main]
     paths:
       - models/models.json
-      - models/config.ini
       - compose.yaml
   workflow_dispatch:
 
@@ -21,7 +20,6 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
-          # Install a specific version of uv.
           version: "0.11.16"
 
       - name: Sync model files
@@ -34,6 +32,5 @@ jobs:
         working-directory: /home/zbloss/Projects/dgx-llm-server
         run: |
           cp $GITHUB_WORKSPACE/compose.yaml .
-          mkdir -p models
-          cp $GITHUB_WORKSPACE/models/config.ini models/config.ini
+          echo "HF_TOKEN=${{ secrets.HF_TOKEN }}" > .env
           docker compose up -d --remove-orphans
