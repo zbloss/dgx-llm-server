@@ -24,7 +24,6 @@ services:
       --max-num-seqs 8
       --max-num-batched-tokens 16384
       --enable-chunked-prefill
-      --async-scheduling
       --enable-prefix-caching
       --load-format fastsafetensors
       --reasoning-parser qwen3
