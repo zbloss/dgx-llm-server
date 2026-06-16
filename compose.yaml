@@ -11,6 +11,7 @@ services:
       - HF_HUB_OFFLINE=1
     command: >-
       --model /models/nvidia--Qwen3.6-35B-A3B-NVFP4
+      --served-model-name nvidia/Qwen3.6-35B-A3B-NVFP4
       --host 0.0.0.0
       --port 8000
       --tensor-parallel-size 1
@@ -25,7 +26,6 @@ services:
       --enable-chunked-prefill
       --async-scheduling
       --enable-prefix-caching
-      --speculative-config '{"method":"mtp","num_speculative_tokens":3,"moe_backend":"triton"}'
       --load-format fastsafetensors
       --reasoning-parser qwen3
       --tool-call-parser qwen3_xml
