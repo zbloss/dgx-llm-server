@@ -9,7 +9,8 @@ services:
     environment:
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN}
     command: >-
-      serve nvidia/Qwen3.6-35B-A3B-NVFP4
+      serve
+      --model nvidia/Qwen3.6-35B-A3B-NVFP4
       --host 0.0.0.0
       --port 8000
       --tensor-parallel-size 1
