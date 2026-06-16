@@ -1,14 +1,8 @@
 {
   "models": [
     {
-      "name": "qwen3.6-27b-mtp",
-      "hf_repo": "unsloth/Qwen3.6-27B-MTP-GGUF",
-      "allow_patterns": ["*UD-Q4_K_XL*.gguf", "mmproj-BF16.gguf"]
-    },
-    {
-      "name": "qwen3.6-35b-a3b-mtp",
-      "hf_repo": "unsloth/Qwen3.6-35B-A3B-MTP-GGUF",
-      "allow_patterns": ["*UD-Q4_K_XL*.gguf", "mmproj-BF16.gguf"]
+      "name": "qwen3.6-35b-a3b",
+      "hf_repo": "nvidia/Qwen3.6-35B-A3B-NVFP4"
     }
   ]
 }

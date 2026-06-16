@@ -1,7 +1,9 @@
 # ADR 0003: Prometheus scraping without model query parameter
 
-**Status:** Accepted  
+**Status:** Superseded by ADR 0004
 **Date:** 2026-06-05
+
+**Superseded because:** llama.cpp Server has been replaced by vLLM. vLLM does not trigger model loads from `/metrics?model=` query parameters, so this constraint no longer applies.
 
 ## Context
 
