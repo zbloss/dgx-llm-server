@@ -7,6 +7,7 @@ services:
     volumes:
       - /home/zbloss/models:/models:ro
       - ./models/config.ini:/config.ini:ro
+      - ./models/chat-templates:/chat-templates:ro
     command: >-
       --models-preset /config.ini
       --models-max 1

@@ -6,6 +6,7 @@ on:
     paths:
       - models/models.json
       - models/config.ini
+      - models/chat-templates/**
       - compose.yaml
   workflow_dispatch:
 
@@ -35,4 +36,6 @@ jobs:
           cp $GITHUB_WORKSPACE/compose.yaml .
           mkdir -p models
           cp $GITHUB_WORKSPACE/models/config.ini models/config.ini
+          rm -rf models/chat-templates
+          cp -r $GITHUB_WORKSPACE/models/chat-templates models/chat-templates
           docker compose up -d --remove-orphans

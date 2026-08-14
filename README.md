@@ -170,6 +170,7 @@ curl -s http://localhost:8080/v1/models | jq .
 |---|---|
 | `compose.yaml` | Docker Compose: single `llama-server` container in router mode |
 | `models/config.ini` | Router preset: per-model GPU/context/speculative-decoding settings |
+| `models/chat-templates/*.jinja` | Per-model chat templates, patched from the upstream GGUF-embedded ones — see `docs/adr/0006-patch-chat-templates-for-agentic-clients.md` |
 | `models/models.json` | GitOps manifest: HuggingFace repo + quant filter for each model |
 | `k8s/*.yaml` | Illustrative examples only — not applied anywhere. The real manifests (Service, IngressRoute/HTTPRoute, ServiceMonitor) live in `home-server`'s `kubernetes/apps/ml/dgx-llama-cpp/`, Flux-managed. Prometheus scraping is currently disabled there — see the warning comment in that repo's `servicemonitor.yaml` before re-enabling it. |
 | `.github/workflows/sync-models.yml` | GitOps workflow (runs on DGX Spark self-hosted runner) |
