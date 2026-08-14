@@ -1,7 +1,24 @@
+#
+# NO METRICS ENDPOINTS DEFINED - DO NOT ADD ONE without reading this first.
+#
+# Router mode's /metrics requires ?model=<name> (400s without it) and is NOT
+# in llama.cpp's load-exempt endpoint list (unlike /health, /props, /models):
+# GET /metrics?model=X force-loads that model and resets its idle timer
+# (confirmed upstream bug: https://github.com/ggml-org/llama.cpp/issues/23096).
+#
+# ADR 0003 documented 2,100+ forced reload cycles from a single scrape
+# target hitting a single-model llama.cpp server every 30s. This stack now
+# runs TWO profiles under --models-max 1 (ADR 0005), so a per-model scrape
+# target would force-swap between them forever on the scrape interval,
+# permanently fighting whatever model is actually in use.
+#
+# Re-enable scraping only after llama.cpp ships an aggregated /metrics that
+# doesn't require a model param:
+# https://github.com/ggml-org/llama.cpp/discussions/19197
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: dgx-vllm
+  name: dgx-llama-cpp
   namespace: ml
   labels:
     release: kube-prometheus-stack
@@ -11,8 +28,5 @@ spec:
       - llm-server
   selector:
     matchLabels:
-      app.kubernetes.io/name: dgx-vllm
-  endpoints:
-    - port: http
-      path: /metrics
-      interval: 30s
+      app.kubernetes.io/name: dgx-llama-cpp
+  endpoints: []
