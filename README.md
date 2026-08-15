@@ -8,7 +8,7 @@ Serves quantized LLMs from a DGX Spark over the local network via an OpenAI-comp
 
 ## How it works
 
-- **A single llama.cpp server** (`llama-server`, router mode) holds a roster of GGUF model profiles defined in `models/config.ini`. Only one model is resident in GPU memory at a time (`--models-max 1`); the router transparently unloads the current model and loads whichever one a request names in its `model` field.
+- **A single llama.cpp server** (`llama-server`, router mode) holds a roster of GGUF model profiles defined in `models/config.ini`. Up to 2 models can be resident in GPU memory at once (`--models-max 2` — one per current profile, so both stay warm simultaneously); the router only evicts (LRU) if a request needs a 3rd profile that doesn't fit. See `docs/adr/0005-return-to-llama-cpp-router-mode.md` for why `--models-max 1` was replaced: with only 1 slot, two independent callers each pinned to a different profile (the interactive coding session on `qwen3.8-27b`, `repowise`'s background doc-generation on `qwen3.6-35b-a3b`) would fight over it, and the router logs showed dozens of eviction cycles, some killing a model mid-load and returning a hard 500 to the caller.
 - **`models/models.json`** is the GitOps manifest: push a change here and the self-hosted GitHub Actions runner on the DGX Spark downloads new GGUF repos, removes obsolete ones, and restarts the stack.
 - **`models/config.ini`** is the router preset file: add, remove, or retune a model profile here — no `compose.yaml` change needed unless a GPU-level flag changes.
 - **Traefik** in the homelab K8s cluster terminates TLS and routes `dgx.blosshomelab.com` to the DGX Spark's fixed IP on port 8080. The manifests that actually do this live in the `home-server` GitOps repo (`kubernetes/apps/ml/dgx-llama-cpp/`, Flux-managed) — `k8s/` in *this* repo is an illustrative example only, kept for reference, not applied anywhere.
@@ -36,7 +36,7 @@ Follow the instructions, and when prompted for labels add `dgx-spark`.
 ```bash
 docker compose up -d
 ```
-The default-warm model (`qwen3.6-35b-a3b`, `load-on-startup = true` in `models/config.ini`) starts loading immediately. Watch progress:
+The default-warm model (`qwen3.8-27b`, `load-on-startup = true` in `models/config.ini` — this is the profile the interactive coding session talks to, so it's the one that should be ready immediately after a restart) starts loading immediately. Watch progress:
 ```bash
 docker compose logs -f llama-server
 ```
@@ -96,10 +96,10 @@ The GitHub Actions workflow runs on the DGX Spark, downloads the new GGUF file(s
 
 | Profile (models/config.ini) | Model | Format | GGUF file | GPU |
 |---|---|---|---|---|
-| `qwen3.6-35b-a3b` | Qwen3.6-35B-A3B (MoE) | GGUF, UD-Q4_K_XL | `unsloth/Qwen3.6-35B-A3B-GGUF` | full offload |
+| `qwen3.6-35b-a3b` | Qwen3.6-35B-A3B (MoE) | GGUF, UD-Q4_K_XL | `unsloth/Qwen3.6-35B-A3B-MTP-GGUF` | full offload |
 | `qwen3.8-27b` | Qwen3.8-27B (dense) | GGUF, UD-Q4_K_XL | `unsloth/Qwen3.8-27B-GGUF` | full offload |
 
-Both profiles: 524,288-token total context budget split across 2 parallel slots (262,144 tokens/slot), MTP speculative decoding, native vision via `mmproj`, q8_0-quantized KV cache. Only one profile is loaded in GPU memory at a time (`--models-max 1`); `qwen3.6-35b-a3b` loads at container startup, `qwen3.8-27b` loads on first request. See the ADR for why these specific numbers were chosen (they're derived from a prior OOM fix, not guessed).
+Both profiles: 524,288-token total context budget split across 2 parallel slots (262,144 tokens/slot), MTP speculative decoding, native vision via `mmproj`, q8_0-quantized KV cache. Both profiles stay resident simultaneously (`--models-max 2`); `qwen3.8-27b` loads at container startup (it's the interactive coding session's model), `qwen3.6-35b-a3b` loads on `repowise`'s first request. See ADR 0007 for why `parallel` stayed at 2 rather than rising for concurrency — a captured server log showed ~48% of real requests already exceed 131,072 tokens (parallel=4's per-slot cap), so `--models-max 2` (letting concurrent requests queue for a slot instead of erroring) is the fix for multi-agent contention, not a smaller per-slot ceiling.
 
 ---
 
@@ -160,7 +160,7 @@ curl -s http://localhost:8080/health
 curl -s http://localhost:8080/v1/models | jq .
 ```
 
-`GET /health` and `GET /v1/models` never trigger a model load, so they're safe to poll or use in healthchecks — unlike a chat completion against a specific `model` name, which will force-load (and, with `--models-max 1`, evict whatever else is loaded).
+`GET /health` and `GET /v1/models` never trigger a model load, so they're safe to poll or use in healthchecks — unlike a chat completion against a specific `model` name, which will force-load it (and, with `--models-max 2` and both current profiles already resident, evict the LRU one if a 3rd profile is ever added).
 
 ---
 

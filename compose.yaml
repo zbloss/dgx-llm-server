@@ -10,7 +10,7 @@ services:
       - ./models/chat-templates:/chat-templates:ro
     command: >-
       --models-preset /config.ini
-      --models-max 1
+      --models-max 2
       --n-gpu-layers -1
       --host 0.0.0.0
       --port 8080
@@ -20,10 +20,11 @@ services:
     healthcheck:
       # GET /health does not count as an incoming task in router mode - it
       # never triggers a model load/unload. Do NOT switch this to a POST
-      # /v1/chat/completions with a hardcoded model name: with two profiles
-      # and --models-max 1, that would force-evict whatever model the user
-      # actually has active every time the healthcheck fires (60s), which is
-      # the same failure mode ADR 0003 documented for Prometheus scraping.
+      # /v1/chat/completions with a hardcoded model name: even now that
+      # --models-max 2 lets both profiles stay resident, a third caller
+      # (repowise, the coding session, or a future third profile) would
+      # still contend with a healthcheck-driven load, the same failure mode
+      # ADR 0003 documented for Prometheus scraping.
       test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
       interval: 60s
       timeout: 10s
