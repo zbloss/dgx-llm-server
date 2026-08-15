@@ -1,6 +1,6 @@
 # ADR 0008: `spec-draft-p-min` and a higher `spec-draft-n-max`
 
-**Status:** Reverted — measured regression, see Consequences
+**Status:** Re-applied, pending a clean re-measurement — see Consequences
 **Date:** 2026-08-15
 
 ## Context
@@ -17,18 +17,16 @@ Set `spec-draft-n-max = 4` (up from 2) and `spec-draft-p-min = 0.5` on both `qwe
 
 ## Consequences
 
-**Measured after deploy — this was a regression, not a gain.**
+**First measurement (2026-08-15, same day) looked like a regression, but was confounded — see ADR 0009.**
 
 Baselines (both established before this change, at `spec-draft-n-max=2`, no `p-min`):
 - `qwen3.6-35b-a3b`: ~47-48 tokens/second (from the `logs.txt` that informed ADR 0007)
 - `qwen3.8-27b`: 25-40 tokens/second (per user)
 
-After deploying `spec-draft-n-max=4` / `spec-draft-p-min=0.5` on both profiles, a fresh `docker compose logs` capture (`grep "eval time"`, the ` eval time = ... tokens per second` lines) showed:
-- `qwen3.6-35b-a3b`: 30.94 tokens/second (single sample, taken right after a cold load — not a large sample, but the only data point available and it points the same direction as qwen3.8-27b below)
-- `qwen3.8-27b`: ~4-17 tokens/second, median ~7, across ~46 completed requests over a 67-hour window with no improving trend over time
+After first deploying `spec-draft-n-max=4` / `spec-draft-p-min=0.5` on both profiles, a `docker compose logs` capture showed `qwen3.6-35b-a3b` at 30.94 tokens/second (one sample) and `qwen3.8-27b` at ~4-17 tokens/second (median ~7) across ~46 requests — both well below baseline, so the change was reverted back to `spec-draft-n-max=2`/no `p-min`.
 
-Draft acceptance rates were healthy throughout (mostly 0.5-0.95), so the MTP draft head itself wasn't misbehaving — whatever ate the gain sits elsewhere (possibly slot contention or draft-verification overhead outweighing the benefit of drafting 4 tokens ahead instead of 2 at this p-min). Root cause not investigated further; not worth chasing given the direction of the result.
+That capture turned out to be unusable as a signal: ADR 0009 found the server was, at the same time, fielding a repeated cancel/retry storm of 130k-164k-token requests, and directly observed a *concurrent, unrelated* generation crawling at 0.55-0.59 tokens/second purely because another slot was mid-prefill on a huge prompt — a contention effect large enough to swamp any real difference `spec-draft-n-max`/`p-min` could make. The regression was real in that capture, but there's no way to attribute it to this setting versus the contention storm.
 
-**Reverted:** both profiles back to `spec-draft-n-max = 2`, `spec-draft-p-min` removed (back to llama.cpp's default `0.00`). The third party's more aggressive `n-max=16`/`p-min=0.8` is not worth trying as a follow-up — the more conservative version of the same lever already regressed, so there's no reason to expect the more aggressive one would do better on this hardware+model combo.
+**Re-applied** `spec-draft-n-max = 4` / `spec-draft-p-min = 0.5` on both profiles once more, this time to be re-measured under clean conditions: a single request, fresh/short context, no concurrent large prefill on the other slot — the same conditions that produced the ~21 tokens/second `qwen3.8-27b` reading at `n-max=2` right after the ADR 0009 restart. Compare a post-deploy clean sample against that number (and against the ~25-40 tokens/second longer-run baseline) before drawing any conclusion this time.
 
 No correctness/output-quality risk either way — see Context.
