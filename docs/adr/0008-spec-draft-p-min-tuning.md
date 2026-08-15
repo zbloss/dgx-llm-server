@@ -1,6 +1,6 @@
 # ADR 0008: `spec-draft-p-min` and a higher `spec-draft-n-max`
 
-**Status:** Accepted (values unverified on this hardware — see Consequences)
+**Status:** Reverted — measured regression, see Consequences
 **Date:** 2026-08-15
 
 ## Context
@@ -17,6 +17,18 @@ Set `spec-draft-n-max = 4` (up from 2) and `spec-draft-p-min = 0.5` on both `qwe
 
 ## Consequences
 
-- **Not yet empirically verified on this hardware+model combo.** The captured `logs.txt` that informed ADR 0007 gives a decode-speed baseline at `spec-draft-n-max=2` — roughly 47-48 tokens/second on `qwen3.6-35b-a3b` (`docker compose logs llama-server | grep "eval time"`, the ` eval time = ... tokens per second` lines, not the `prompt eval time` ones). After deploying this change, re-check the same grep and compare. If it doesn't measurably improve, or regresses, revert to `spec-draft-n-max = 2` and drop `spec-draft-p-min` rather than pushing toward the more aggressive third-party values on faith.
-- If this baseline check does confirm a real gain, the third party's more aggressive `n-max=16`/`p-min=0.8` becomes a reasonable next experiment — but only as a follow-up measured step, not adopted here directly.
-- No correctness/output-quality risk either way — see Context.
+**Measured after deploy — this was a regression, not a gain.**
+
+Baselines (both established before this change, at `spec-draft-n-max=2`, no `p-min`):
+- `qwen3.6-35b-a3b`: ~47-48 tokens/second (from the `logs.txt` that informed ADR 0007)
+- `qwen3.8-27b`: 25-40 tokens/second (per user)
+
+After deploying `spec-draft-n-max=4` / `spec-draft-p-min=0.5` on both profiles, a fresh `docker compose logs` capture (`grep "eval time"`, the ` eval time = ... tokens per second` lines) showed:
+- `qwen3.6-35b-a3b`: 30.94 tokens/second (single sample, taken right after a cold load — not a large sample, but the only data point available and it points the same direction as qwen3.8-27b below)
+- `qwen3.8-27b`: ~4-17 tokens/second, median ~7, across ~46 completed requests over a 67-hour window with no improving trend over time
+
+Draft acceptance rates were healthy throughout (mostly 0.5-0.95), so the MTP draft head itself wasn't misbehaving — whatever ate the gain sits elsewhere (possibly slot contention or draft-verification overhead outweighing the benefit of drafting 4 tokens ahead instead of 2 at this p-min). Root cause not investigated further; not worth chasing given the direction of the result.
+
+**Reverted:** both profiles back to `spec-draft-n-max = 2`, `spec-draft-p-min` removed (back to llama.cpp's default `0.00`). The third party's more aggressive `n-max=16`/`p-min=0.8` is not worth trying as a follow-up — the more conservative version of the same lever already regressed, so there's no reason to expect the more aggressive one would do better on this hardware+model combo.
+
+No correctness/output-quality risk either way — see Context.
