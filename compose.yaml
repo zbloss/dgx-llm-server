@@ -10,6 +10,7 @@ services:
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN}
       - HF_HUB_OFFLINE=1
     command: >-
+      vllm serve
       --model /models/unsloth--Qwen3.8-27B-NVFP4
       --served-model-name qwen3.8-27b
       --host 0.0.0.0
