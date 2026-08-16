@@ -1,6 +1,6 @@
 services:
   vllm-server:
-    image: vllm/vllm-openai:nightly
+    image: ghcr.io/spark-arena/dgx-vllm-eugr-nightly:nightly-20260801
     restart: unless-stopped
     ports:
       - "8000:8000"
