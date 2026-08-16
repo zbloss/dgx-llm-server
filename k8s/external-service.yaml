@@ -11,13 +11,13 @@ metadata:
   name: dgx-llm-server
   namespace: llm-server
   labels:
-    app.kubernetes.io/name: dgx-llama-cpp
+    app.kubernetes.io/name: dgx-vllm
 spec:
   ports:
     - name: http
-      port: 8080
+      port: 8000
       protocol: TCP
-      targetPort: 8080
+      targetPort: 8000
 ---
 apiVersion: v1
 kind: Endpoints
@@ -29,5 +29,5 @@ subsets:
       - ip: "192.168.X.X"
     ports:
       - name: http
-        port: 8080
+        port: 8000
         protocol: TCP

@@ -1,35 +1,37 @@
 services:
-  llama-server:
-    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+  vllm-server:
+    image: vllm/vllm-openai:nightly
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "8000:8000"
     volumes:
       - /home/zbloss/models:/models:ro
-      - ./models/config.ini:/config.ini:ro
-      - ./models/chat-templates:/chat-templates:ro
+    environment:
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN}
+      - HF_HUB_OFFLINE=1
     command: >-
-      --models-preset /config.ini
-      --models-max 2
-      --n-gpu-layers -1
+      --model /models/unsloth--Qwen3.8-27B-NVFP4
+      --served-model-name qwen3.8-27b
       --host 0.0.0.0
-      --port 8080
-      --flash-attn on
-      --jinja
-      --metrics
+      --port 8000
+      --tensor-parallel-size 1
+      --gpu-memory-utilization 0.45
+      --max-model-len 262144
+      --max-num-seqs 4
+      --max-num-batched-tokens 8192
+      --enable-chunked-prefill
+      --enable-prefix-caching
+      --reasoning-parser qwen3
+      --tool-call-parser qwen3_xml
+      --enable-auto-tool-choice
+      --distributed-executor-backend mp
+      --speculative-config '{"method":"mtp","num_speculative_tokens":5}'
     healthcheck:
-      # GET /health does not count as an incoming task in router mode - it
-      # never triggers a model load/unload. Do NOT switch this to a POST
-      # /v1/chat/completions with a hardcoded model name: even now that
-      # --models-max 2 lets both profiles stay resident, a third caller
-      # (repowise, the coding session, or a future third profile) would
-      # still contend with a healthcheck-driven load, the same failure mode
-      # ADR 0003 documented for Prometheus scraping.
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
-      interval: 60s
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/v1/models || exit 1"]
+      interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 180s
+      retries: 10
+      start_period: 240s
     deploy:
       resources:
         reservations:

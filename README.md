@@ -1,6 +1,6 @@
 # dgx-llm-server
 
-Serves quantized LLMs from a DGX Spark over the local network via an OpenAI-compatible API. Models are managed through git — push a config change to swap or add a model without touching the DGX Spark.
+Serves a quantized LLM from a DGX Spark over the local network via an OpenAI-compatible API. Models are managed through git - push a config change to swap the model without touching the DGX Spark.
 
 **Endpoint:** `https://dgx.blosshomelab.com`
 
@@ -8,11 +8,11 @@ Serves quantized LLMs from a DGX Spark over the local network via an OpenAI-comp
 
 ## How it works
 
-- **A single llama.cpp server** (`llama-server`, router mode) holds a roster of GGUF model profiles defined in `models/config.ini`. Up to 2 models can be resident in GPU memory at once (`--models-max 2` — one per current profile, so both stay warm simultaneously); the router only evicts (LRU) if a request needs a 3rd profile that doesn't fit. See `docs/adr/0005-return-to-llama-cpp-router-mode.md` for why `--models-max 1` was replaced: with only 1 slot, two independent callers each pinned to a different profile (the interactive coding session on `qwen3.8-27b`, `repowise`'s background doc-generation on `qwen3.6-35b-a3b`) would fight over it, and the router logs showed dozens of eviction cycles, some killing a model mid-load and returning a hard 500 to the caller.
-- **`models/models.json`** is the GitOps manifest: push a change here and the self-hosted GitHub Actions runner on the DGX Spark downloads new GGUF repos, removes obsolete ones, and restarts the stack.
-- **`models/config.ini`** is the router preset file: add, remove, or retune a model profile here — no `compose.yaml` change needed unless a GPU-level flag changes.
-- **Traefik** in the homelab K8s cluster terminates TLS and routes `dgx.blosshomelab.com` to the DGX Spark's fixed IP on port 8080. The manifests that actually do this live in the `home-server` GitOps repo (`kubernetes/apps/ml/dgx-llama-cpp/`, Flux-managed) — `k8s/` in *this* repo is an illustrative example only, kept for reference, not applied anywhere.
-- The endpoint has no API key auth — access is scoped by network/Traefik routing, not by a bearer token.
+- **A single vLLM server** (`vllm/vllm-openai:nightly`) serves `unsloth/Qwen3.8-27B-NVFP4` on port 8000. There is no model-swap-by-name - one model, always resident.
+- **`models/models.json`** is the GitOps manifest: push a change here and the self-hosted GitHub Actions runner on the DGX Spark downloads the new HuggingFace repo, removes the obsolete one, and restarts the stack.
+- **`compose.yaml`** carries the vLLM launch flags (context length, batching, speculative decoding, tool/reasoning parsers) - edit it directly to retune the model.
+- **Traefik** in the homelab K8s cluster terminates TLS and routes `dgx.blosshomelab.com` to the DGX Spark's fixed IP on port 8000. The manifests that actually do this live in the `home-server` GitOps repo (`kubernetes/apps/ml/dgx-vllm/`, Flux-managed) - `k8s/` in *this* repo is an illustrative example only, kept for reference, not applied anywhere.
+- The endpoint has no API key auth - access is scoped by network/Traefik routing, not by a bearer token.
 
 ---
 
@@ -36,18 +36,17 @@ Follow the instructions, and when prompted for labels add `dgx-spark`.
 ```bash
 docker compose up -d
 ```
-The default-warm model (`qwen3.8-27b`, `load-on-startup = true` in `models/config.ini` — this is the profile the interactive coding session talks to, so it's the one that should be ready immediately after a restart) starts loading immediately. Watch progress:
+Watch progress as the model loads:
 ```bash
-docker compose logs -f llama-server
+docker compose logs -f vllm-server
 ```
-Other profiles in `models/config.ini` load lazily on first request.
 
 **3. Enable the systemd service so the stack starts on boot:**
 
 Create `/etc/systemd/system/dgx-llm-server.service`:
 ```ini
 [Unit]
-Description=DGX LLM Server (llama.cpp docker compose stack)
+Description=DGX LLM Server (vLLM docker compose stack)
 Requires=docker.service
 After=docker.service network-online.target
 Wants=network-online.target
@@ -71,41 +70,39 @@ sudo systemctl enable --now dgx-llm-server.service
 
 **4. Apply the K8s manifests:**
 
-The manifests that actually route `dgx.blosshomelab.com` live in the `home-server` GitOps repo (`kubernetes/apps/ml/dgx-llama-cpp/`), applied automatically by Flux. `k8s/` in *this* repo is an illustrative example only — useful as a reference for what the real ones look like, but not something you `kubectl apply` here. To change routing, DGX Spark IP, or Prometheus scraping, edit the files in `home-server` instead.
+The manifests that actually route `dgx.blosshomelab.com` live in the `home-server` GitOps repo (`kubernetes/apps/ml/dgx-vllm/`), applied automatically by Flux. `k8s/` in *this* repo is an illustrative example only - useful as a reference for what the real ones look like, but not something you `kubectl apply` here. To change routing, DGX Spark IP, or Prometheus scraping, edit the files in `home-server` instead.
 
-**5. Add `HF_TOKEN` as a GitHub Actions secret** (repo → Settings → Secrets and variables → Actions → New repository secret). Required to download models from HuggingFace during the GitOps sync — the `llama-server` container itself never talks to HuggingFace.
+**5. Add `HF_TOKEN` as a GitHub Actions secret** (repo → Settings → Secrets and variables → Actions → New repository secret). Required to download the model from HuggingFace during the GitOps sync - the `vllm-server` container itself never talks to HuggingFace (`HF_HUB_OFFLINE=1`).
 
 **6. Trigger the first model download:**
 
-Push any change to `models/models.json`, `models/config.ini`, or `compose.yaml`, or run the workflow manually from the Actions tab.
+Push any change to `models/models.json` or `compose.yaml`, or run the workflow manually from the Actions tab.
 
 ---
 
-## Swapping or adding a model
+## Swapping the model
 
-1. Add the new model's entry to `models/models.json` (`name`, `hf_repo`, and an `allow_patterns` filter — GGUF repos ship many quant variants, and you almost always want exactly one plus the `mmproj` file, not the whole repo).
-2. Add a matching `[profile-name]` section to `models/config.ini` pointing at the downloaded file paths.
-3. Remove the old entries from both files if replacing rather than adding.
-4. Push to `main`.
+1. Update the entry in `models/models.json` (`name`, `hf_repo`, and an optional `allow_patterns` filter if the new repo publishes multiple quant variants and you only want one).
+2. Update `compose.yaml`'s `--model` / `--served-model-name` to match the new local path and repo id.
+3. Push to `main`.
 
-The GitHub Actions workflow runs on the DGX Spark, downloads the new GGUF file(s), removes obsolete directories, and restarts the stack. Clients then select the new model by putting its `config.ini` profile name in the `model` field — the router loads it on first request, no further deploy needed. See `docs/adr/0005-return-to-llama-cpp-router-mode.md` for the reasoning behind the current model-swap design and its VRAM/context tradeoffs.
+The GitHub Actions workflow runs on the DGX Spark, downloads the new model, removes the obsolete directory, and restarts the stack.
 
 ---
 
-## Models
+## Model
 
-| Profile (models/config.ini) | Model | Format | GGUF file | GPU |
+| Served model name | Model | Format | HF repo | GPU |
 |---|---|---|---|---|
-| `qwen3.6-35b-a3b` | Qwen3.6-35B-A3B (MoE) | GGUF, UD-Q4_K_XL | `unsloth/Qwen3.6-35B-A3B-MTP-GGUF` | full offload |
-| `qwen3.8-27b` | Qwen3.8-27B (dense) | GGUF, UD-Q4_K_XL | `unsloth/Qwen3.8-27B-GGUF` | full offload |
+| `qwen3.8-27b` | Qwen3.8-27B (dense) | NVFP4 safetensors | `unsloth/Qwen3.8-27B-NVFP4` | full offload, tensor-parallel-size 1 |
 
-Both profiles: 524,288-token total context budget split across 2 parallel slots (262,144 tokens/slot), MTP speculative decoding, native vision via `mmproj`, q8_0-quantized KV cache. Both profiles stay resident simultaneously (`--models-max 2`); `qwen3.8-27b` loads at container startup (it's the interactive coding session's model), `qwen3.6-35b-a3b` loads on `repowise`'s first request. See ADR 0007 for why `parallel` stayed at 2 rather than rising for concurrency — a captured server log showed ~48% of real requests already exceed 131,072 tokens (parallel=4's per-slot cap), so `--models-max 2` (letting concurrent requests queue for a slot instead of erroring) is the fix for multi-agent contention, not a smaller per-slot ceiling.
+262,144-token context, MTP speculative decoding (`model_mtp.safetensors`, bundled in the repo), chunked prefill, prefix caching, `gpu-memory-utilization 0.45`. See `docs/adr/0010-return-to-vllm-qwen38-27b-nvfp4.md` for the reasoning behind these settings.
 
 ---
 
 ## Client configuration
 
-All clients use `https://dgx.blosshomelab.com/v1` as the base URL and a `config.ini` profile name (`qwen3.6-35b-a3b` or `qwen3.8-27b`) in the `model` field. No API key is required.
+All clients use `https://dgx.blosshomelab.com/v1` as the base URL and `qwen3.8-27b` in the `model` field. No API key is required.
 
 **Claude Code / shell environment:**
 ```bash
@@ -121,7 +118,7 @@ export OPENAI_API_KEY=unused
     "type": "openai",
     "baseUrl": "https://dgx.blosshomelab.com/v1",
     "apiKey": "unused",
-    "models": ["qwen3.6-35b-a3b", "qwen3.8-27b"]
+    "models": ["qwen3.8-27b"]
   }]
 }
 ```
@@ -135,7 +132,7 @@ client = OpenAI(
     api_key="unused",
 )
 response = client.chat.completions.create(
-    model="qwen3.6-35b-a3b",
+    model="qwen3.8-27b",
     messages=[{"role": "user", "content": "Hello"}],
 )
 ```
@@ -153,14 +150,11 @@ env:
 
 ## Verify GPU offload
 
-After startup, confirm the default-warm model loaded successfully:
+After startup, confirm the model loaded successfully:
 ```bash
-docker compose logs llama-server | grep -i "loaded\|error"
-curl -s http://localhost:8080/health
-curl -s http://localhost:8080/v1/models | jq .
+docker compose logs vllm-server | grep -i "error\|loaded weights"
+curl -s http://localhost:8000/v1/models | jq .
 ```
-
-`GET /health` and `GET /v1/models` never trigger a model load, so they're safe to poll or use in healthchecks — unlike a chat completion against a specific `model` name, which will force-load it (and, with `--models-max 2` and both current profiles already resident, evict the LRU one if a 3rd profile is ever added).
 
 ---
 
@@ -168,11 +162,9 @@ curl -s http://localhost:8080/v1/models | jq .
 
 | File | Purpose |
 |---|---|
-| `compose.yaml` | Docker Compose: single `llama-server` container in router mode |
-| `models/config.ini` | Router preset: per-model GPU/context/speculative-decoding settings |
-| `models/chat-templates/*.jinja` | Per-model chat templates, patched from the upstream GGUF-embedded ones — see `docs/adr/0006-patch-chat-templates-for-agentic-clients.md` |
-| `models/models.json` | GitOps manifest: HuggingFace repo + quant filter for each model |
-| `k8s/*.yaml` | Illustrative examples only — not applied anywhere. The real manifests (Service, IngressRoute/HTTPRoute, ServiceMonitor) live in `home-server`'s `kubernetes/apps/ml/dgx-llama-cpp/`, Flux-managed. Prometheus scraping is currently disabled there — see the warning comment in that repo's `servicemonitor.yaml` before re-enabling it. |
+| `compose.yaml` | Docker Compose: single `vllm-server` container with all vLLM launch flags |
+| `models/models.json` | GitOps manifest: HuggingFace repo (and optional quant filter) for the model |
+| `k8s/*.yaml` | Illustrative examples only - not applied anywhere. The real manifests (Service, IngressRoute/HTTPRoute, ServiceMonitor) live in `home-server`'s `kubernetes/apps/ml/dgx-vllm/`, Flux-managed. |
 | `.github/workflows/sync-models.yml` | GitOps workflow (runs on DGX Spark self-hosted runner) |
-| `scripts/sync_models.py` | Downloads new GGUF repos (filtered by `allow_patterns`), removes obsolete ones |
+| `scripts/sync_models.py` | Downloads the model repo (filtered by `allow_patterns` if set), removes obsolete ones |
 | `docs/adr/` | Architecture decision records for the model stack's history |

@@ -11,7 +11,7 @@ spec:
       kind: Rule
       services:
         - name: dgx-llm-server
-          port: 8080
+          port: 8000
   tls:
     # Replace with your Traefik cert resolver name.
     certResolver: default
