@@ -2,6 +2,7 @@ services:
   vllm-server:
     image: ghcr.io/spark-arena/dgx-vllm-eugr-nightly@sha256:d2eb44d303ba2888d3a029a63fbca9e33ee87e9338a8294cc3ac611b695cf76c
     restart: unless-stopped
+    shm_size: "2g"
     ports:
       - "8000:8000"
     volumes:
