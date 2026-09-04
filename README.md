@@ -167,4 +167,18 @@ curl -s http://localhost:8000/v1/models | jq .
 | `k8s/*.yaml` | Illustrative examples only - not applied anywhere. The real manifests (Service, IngressRoute/HTTPRoute, ServiceMonitor) live in `home-server`'s `kubernetes/apps/ml/dgx-vllm/`, Flux-managed. |
 | `.github/workflows/sync-models.yml` | GitOps workflow (runs on DGX Spark self-hosted runner) |
 | `scripts/sync_models.py` | Downloads the model repo (filtered by `allow_patterns` if set), removes obsolete ones |
+| `scripts/benchmark.py` | Lightweight single-stream benchmark (TTFT/TTFAT/tok-per-sec) for the repo's three fixed prompt profiles |
+| `guidellm/` | Dockerized [guidellm](https://github.com/vllm-project/guidellm) benchmark - concurrency sweeps, latency percentiles. See below. |
 | `docs/adr/` | Architecture decision records for the model stack's history |
+
+---
+
+## Benchmarking with guidellm
+
+`guidellm` depends on `uvloop`, which doesn't build on Windows, so it runs in Docker - this also keeps the load generator off the same machine as the server under test, which running it directly on the Spark would not.
+
+```bash
+./guidellm/run.sh [duration_seconds]   # default 30s per sweep step
+```
+
+This builds the image (if needed), runs a `sweep` profile (synchronous -> throughput -> ramping constant-rate steps) against `qwen3.8-27b` on the Spark, and writes timestamped results to `guidellm/results/<model>_<YYYYmmdd-HHMMSS>.{json,csv}` for tracking performance over time across config changes. Override `TARGET`, `TOKENIZER_MODEL`, or `MODEL_NAME` env vars to point at a different server or model.
