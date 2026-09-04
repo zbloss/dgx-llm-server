@@ -6,10 +6,13 @@
 The NVIDIA personal AI supercomputer (GB10 Grace Blackwell) running this project. 128GB unified memory shared between ARM CPU and Blackwell GPU. Runs headless in a homelab.
 
 ### vllm-server
-A single `vllm-server` container (`vllm/vllm-openai:nightly`) serving an OpenAI-compatible HTTP API on port 8000, running `unsloth/Qwen3.8-27B-NVFP4` under the served model name `qwen3.8-27b` (`--served-model-name`) - the only model this stack serves. No model-swap-by-name: unlike the previous llama.cpp router-mode setup, there is exactly one resident model. No `--api-key` is set, so the endpoint has no built-in auth; access is scoped by network/Traefik routing only.
+A single `vllm-server` container (`ghcr.io/spark-arena/dgx-vllm-eugr-nightly`, a digest-pinned mirror of `eugr/spark-vllm`'s vLLM nightly builds) serving an OpenAI-compatible HTTP API on port 8000, running `unsloth/Qwen3.8-27B-NVFP4` under the served model name `qwen3.8-27b` (`--served-model-name`) - the only model this stack serves. No model-swap-by-name: unlike the previous llama.cpp router-mode setup, there is exactly one resident model. No `--api-key` is set, so the endpoint has no built-in auth; access is scoped by network/Traefik routing only.
+
+### DFlash2 draft model
+`z-lab/Qwen3.8-27B-DFlash2` - a ~1.9B-parameter block-diffusion speculative-decoding draft model for the target `Qwen/Qwen3.8-27B` checkpoint, downloaded to `/models/z-lab--Qwen3.8-27B-DFlash2` via the same GitOps sync as the main model. Used via `--speculative-config '{"method":"dflash",...}'` (ADR 0013), replacing the target checkpoint's own bundled MTP head. Predicts a whole block of draft tokens per forward pass instead of one at a time; decoding stays lossless (verified against the target model, same as MTP).
 
 ### Qwen3.8-27B NVFP4
-`unsloth/Qwen3.8-27B-NVFP4` - a native NVFP4 safetensors checkpoint (not GGUF), including a bundled `model_mtp.safetensors` used for MTP speculative decoding (`--speculative-config '{"method":"mtp","num_speculative_tokens":5}'`). Released as a day-one NVFP4 quant, closing the gap that forced the prior llama.cpp-era stack (ADR 0005) onto GGUF K-quants for lack of a published NVFP4 GGUF.
+`unsloth/Qwen3.8-27B-NVFP4` - a native NVFP4 safetensors checkpoint (not GGUF). Released as a day-one NVFP4 quant, closing the gap that forced the prior llama.cpp-era stack (ADR 0005) onto GGUF K-quants for lack of a published NVFP4 GGUF. Ships a bundled `model_mtp.safetensors` (unused since ADR 0013 - see below) alongside the main weights.
 
 ### Models Directory
 `/home/zbloss/models` on the DGX Spark host, mounted read-only as `/models` inside the container. Contains one directory per HF repo (`unsloth--Qwen3.8-27B-NVFP4/`), downloaded whole - no `allow_patterns` filter, since it's a single-file safetensors repo rather than a multi-quant GGUF repo.
@@ -43,5 +46,8 @@ The model stack has changed several times; see `docs/adr/` for full rationale. C
 4. **ADR 0004** (superseded by 0005): migrated from llama.cpp back to vLLM with `nvidia/Qwen3.6-35B-A3B-NVFP4` as the sole model. Port changed from 8080 to 8000.
 5. **ADR 0005** (superseded by 0010): migrated back to llama.cpp router mode to serve two swappable GGUF profiles (`qwen3.6-35b-a3b`, `qwen3.8-27b`). Port reverted to 8080.
 6. **ADR 0010** (accepted): dropped `qwen3.6-35b-a3b` (low actual usage) and moved `qwen3.8-27b` off GGUF/llama.cpp onto vLLM, now that `unsloth/Qwen3.8-27B-NVFP4` exists as a native NVFP4 checkpoint with bundled MTP tensors. Back to a single vLLM container, port 8000, no model-swap-by-name.
+7. **ADR 0011** (accepted, amends 0010): empirical GPU-memory/batching retune - `gpu-memory-utilization` 0.45→0.85, `max-num-seqs` 4→8, `max-num-batched-tokens` 8192→32768, default `reasoning_effort: medium`, persisted `/root/.cache/vllm` across restarts.
+8. **ADR 0012** (accepted, amends 0010/0011): added `--enable-flashinfer-autotune` (unverified pending deploy); rejected several community-sourced env vars as redundant with this image's build-time defaults; documented (without acting on) a third-party report of MTP speculative decoding causing a full host reboot under concurrent load.
+9. **ADR 0013** (accepted, amends 0010/0012): considered and rejected switching the whole stack to SGLang (unofficial GB10 support, modest measured edge over vLLM); instead bumped the vLLM image ~3 weeks and replaced MTP speculative decoding with `z-lab/Qwen3.8-27B-DFlash2`, a block-diffusion draft model with native (now-merged) vLLM support.
 
 If you're touching `compose.yaml` or the model stack, treat the ADRs as historical rationale rather than a current-state reference - cross-check against `compose.yaml`, `models/models.json`, and `k8s/*.yaml` directly.

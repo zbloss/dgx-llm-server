@@ -1,6 +1,6 @@
 services:
   vllm-server:
-    image: ghcr.io/spark-arena/dgx-vllm-eugr-nightly@sha256:d2eb44d303ba2888d3a029a63fbca9e33ee87e9338a8294cc3ac611b695cf76c
+    image: ghcr.io/spark-arena/dgx-vllm-eugr-nightly@sha256:a8f5362e73406dd35d1f513db0f2cba050e9075bf5a1e108a9e4337df6e080d8
     restart: unless-stopped
     shm_size: "2g"
     ports:
@@ -24,12 +24,13 @@ services:
       --max-num-batched-tokens 32768
       --enable-chunked-prefill
       --enable-prefix-caching
+      --enable-flashinfer-autotune
       --reasoning-parser qwen3
       --tool-call-parser qwen3_xml
       --enable-auto-tool-choice
       --distributed-executor-backend mp
       --default-chat-template-kwargs '{"reasoning_effort":"medium"}'
-      --speculative-config '{"method":"mtp","num_speculative_tokens":5}'
+      --speculative-config '{"method":"dflash","model":"/models/z-lab--Qwen3.8-27B-DFlash2","num_speculative_tokens":7}'
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8000/v1/models || exit 1"]
       interval: 30s

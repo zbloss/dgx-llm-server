@@ -96,7 +96,7 @@ The GitHub Actions workflow runs on the DGX Spark, downloads the new model, remo
 |---|---|---|---|---|
 | `qwen3.8-27b` | Qwen3.8-27B (dense) | NVFP4 safetensors | `unsloth/Qwen3.8-27B-NVFP4` | full offload, tensor-parallel-size 1 |
 
-262,144-token context, MTP speculative decoding (`model_mtp.safetensors`, bundled in the repo), chunked prefill, prefix caching, `gpu-memory-utilization 0.45`. See `docs/adr/0010-return-to-vllm-qwen38-27b-nvfp4.md` for the reasoning behind these settings.
+262,144-token context, DFlash2 speculative decoding (`z-lab/Qwen3.8-27B-DFlash2` draft model, downloaded alongside the main checkpoint), chunked prefill, prefix caching, `gpu-memory-utilization 0.85`. See `docs/adr/0010-return-to-vllm-qwen38-27b-nvfp4.md`, `docs/adr/0011-vllm-perf-tuning-gpu-memory-and-batching.md`, `docs/adr/0012-flashinfer-autotune-and-mtp-crash-risk.md`, and `docs/adr/0013-dflash2-speculative-decoding.md` for the reasoning behind these settings.
 
 ---
 

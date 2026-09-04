@@ -3,6 +3,10 @@
     {
       "name": "qwen3.8-27b",
       "hf_repo": "unsloth/Qwen3.8-27B-NVFP4"
+    },
+    {
+      "name": "qwen3.8-27b-dflash2-draft",
+      "hf_repo": "z-lab/Qwen3.8-27B-DFlash2"
     }
   ]
 }
