@@ -2,7 +2,7 @@
   "models": [
     {
       "name": "qwen3.8-flash-next",
-      "hf_repo": "RadixArk/Qwen3.8-Flash-Next-NVFP4"
+      "hf_repo": "nvidia/Qwen3.8-Flash-Next-NVFP4"
     }
   ]
 }
