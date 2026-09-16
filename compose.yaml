@@ -30,6 +30,7 @@ services:
         --max-running-requests 8
         --reasoning-parser auto
         --tool-call-parser auto
+        --enable-metrics
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8000/v1/models || exit 1"]
       interval: 30s
