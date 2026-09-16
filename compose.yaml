@@ -18,17 +18,27 @@ services:
       - >-
         rm -rf /ple-cache/* &&
         exec sglang serve
-        --model-path /models/RadixArk--Qwen3.8-Flash-Next-NVFP4
+        --model-path /models/nvidia--Qwen3.8-Flash-Next-NVFP4
         --served-model-name qwen3.8-flash-next
         --host 0.0.0.0
         --port 8000
         --tp 1
+        --moe-runner-backend flashinfer_cutlass
+        --fp4-gemm-backend flashinfer_cutlass
+        --page-size 64
+        --chunked-prefill-size 4096
+        --context-length 262144
+        --speculative-algorithm NEXTN
+        --speculative-num-steps 3
+        --speculative-eagle-topk 1
+        --speculative-num-draft-tokens 4
+        --max-mamba-cache-size 40
         --ple-offload-embedding
         --ple-offload-backend file
         --ple-offload-dir /ple-cache
         --mem-fraction-static 0.85
         --max-running-requests 8
-        --reasoning-parser auto
+        --reasoning-parser qwen3
         --tool-call-parser auto
         --enable-metrics
     healthcheck:
