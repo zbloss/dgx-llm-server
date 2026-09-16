@@ -29,7 +29,15 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
 
       - name: Clear stale PLE table cache
-        run: rm -rf /home/zbloss/sglang-ple-cache/*
+        # Best-effort: the PLE table dir/files end up root-owned (the
+        # sglang-server container writes them as root), which this
+        # unprivileged runner user can't delete. Non-fatal because it's
+        # redundant by design (ADR 0016) - compose.yaml's own entrypoint
+        # wrapper (`rm -rf /ple-cache/* && exec sglang serve ...`) does the
+        # same delete as root on every container start, which is what
+        # actually guarantees the fast PLE-rebuild path.
+        run: |
+          rm -rf /home/zbloss/sglang-ple-cache/* || echo "::warning::Could not clear PLE cache from CI (likely permission denied - files are root-owned by the container). Non-fatal: compose.yaml's entrypoint wrapper clears this directory as root on every container start (ADR 0016)."
 
       - name: Apply compose changes
         working-directory: /home/zbloss/Projects/dgx-llm-server
