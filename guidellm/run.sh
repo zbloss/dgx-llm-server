@@ -8,18 +8,22 @@
 # chat. That means: a large first-turn prompt (system prompt + repo/file
 # context), smaller follow-up turns (tool results, incremental instructions)
 # to exercise --enable-prefix-caching the way a real session would, moderate
-# code-sized outputs, and a small set of fixed concurrency levels (1, 2, 4)
+# code-sized outputs, and a small set of fixed concurrency levels (1, 2, 4, 8)
 # rather than a full saturation sweep up to hundreds of concurrent streams -
 # this is a single-user/small-team deployment, not a public inference
-# endpoint, so max-throughput numbers aren't the thing that matters.
+# endpoint, so max-throughput numbers aren't the thing that matters. The top
+# level (8) is qwen3.8-flash-next's memory-bound --max-running-requests
+# ceiling (ADR 0016/0017) - include it so the sweep actually reaches the
+# point where the recipe's published numbers say this model overtakes the
+# old qwen3.8-27b baseline.
 #
 # Usage: ./run.sh [duration_seconds_per_concurrency_level]
 set -euo pipefail
 
-MODEL_NAME="${MODEL_NAME:-qwen3.8-27b}"
+MODEL_NAME="${MODEL_NAME:-qwen3.8-flash-next}"
 TARGET="${TARGET:-http://192.168.68.104:8000}"
-TOKENIZER_MODEL="${TOKENIZER_MODEL:-unsloth/Qwen3.8-27B-NVFP4}"
-CONCURRENCY_LEVELS="${CONCURRENCY_LEVELS:-1,2,4}"
+TOKENIZER_MODEL="${TOKENIZER_MODEL:-nvidia/Qwen3.8-Flash-Next-NVFP4}"
+CONCURRENCY_LEVELS="${CONCURRENCY_LEVELS:-1,2,4,8}"
 DURATION_SECONDS="${1:-${DURATION_SECONDS:-30}}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
