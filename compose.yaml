@@ -54,3 +54,33 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+
+  mem-watchdog:
+    # ADR 0018: SGLang's DGX Spark cookbook notes that unified-memory
+    # exhaustion "can take the whole box down and needs a power cycle to
+    # recover" (same failure class as ADR 0012/0014's FlashInfer-autotune
+    # incident). Kills sglang-server before that happens; restart:
+    # unless-stopped + its own entrypoint wrapper bring it back with a
+    # fresh PLE table, same as any other crash-and-recover path.
+    image: docker:27-cli
+    restart: unless-stopped
+    volumes:
+      - /proc:/host/proc:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - MEM_AVAILABLE_MIN_KB=4194304
+      - TARGET_CONTAINER=dgx-llm-server-sglang-server-1
+      - POLL_INTERVAL_SECONDS=10
+      - COOLDOWN_SECONDS=120
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        while true; do
+          avail_kb=$$(awk '/MemAvailable/ {print $$2}' /host/proc/meminfo);
+          if [ "$$avail_kb" -lt "$$MEM_AVAILABLE_MIN_KB" ]; then
+            echo "$$(date -u +%Y-%m-%dT%H:%M:%SZ) [mem-watchdog] MemAvailable=$${avail_kb}KB below threshold=$${MEM_AVAILABLE_MIN_KB}KB - killing $$TARGET_CONTAINER";
+            docker kill "$$TARGET_CONTAINER" || echo "docker kill failed (already down?)";
+            sleep "$$COOLDOWN_SECONDS";
+          fi;
+          sleep "$$POLL_INTERVAL_SECONDS";
+        done
