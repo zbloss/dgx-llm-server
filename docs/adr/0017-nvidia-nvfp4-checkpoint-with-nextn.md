@@ -35,7 +35,7 @@ sglang serve \
 --ple-offload-backend file
 ```
 
-**A second block of text, pasted alongside the above during this session, claiming NVIDIA's checkpoint has MTP experts that "cannot be split across two ranks" and that a "two-node low-latency cell reads the MTP draft from the RadixArk export," could not be found anywhere on the live page** (checked via full page-text extraction, including the "DGX Spark notes" accordion). That claim is not part of this decision's basis and should be treated as unverified/likely fabricated if it resurfaces.
+**Correction (2026-09-16, later same day):** a second block of text pasted alongside the above, claiming NVIDIA's checkpoint has MTP experts that "cannot be split across two ranks" and that a "two-node low-latency cell reads the MTP draft from the RadixArk export," was initially flagged here as unverifiable/likely fabricated — the "DGX Spark notes" accordion appeared empty on the first check. That check was wrong: the accordion's expand click hadn't actually registered (a UI interaction issue, re-discovered while resolving the map's "Not yet specified" fog), and re-checking it properly shows that paragraph verbatim, under "NVIDIA export (NVFP4 (NVDA))." It describes the **two-node TP=2** low-latency case specifically, not the single-Spark (TP=1, file-backed PLE table) configuration this repo deploys, so it doesn't change this ADR's decision — but the "likely fabricated" characterization was incorrect and is retracted.
 
 The RadixArk checkpoint's partial download (113GB of ~127GB) was deleted from `/home/zbloss/models` as part of clearing the hung state — no data loss concern, since it was never a complete, servable checkpoint.
 
