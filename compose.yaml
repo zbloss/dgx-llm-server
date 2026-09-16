@@ -1,41 +1,41 @@
 services:
-  vllm-server:
-    image: ghcr.io/spark-arena/dgx-vllm-eugr-nightly@sha256:d2eb44d303ba2888d3a029a63fbca9e33ee87e9338a8294cc3ac611b695cf76c
+  sglang-server:
+    image: lmsysorg/sglang:dev-qwen38-next-local
     restart: unless-stopped
     shm_size: "2g"
     ports:
       - "8000:8000"
     volumes:
       - /home/zbloss/models:/models:ro
-      - /home/zbloss/.cache/vllm:/root/.cache/vllm
+      - /home/zbloss/.cache/sglang:/root/.cache/sglang
+      - /home/zbloss/sglang-ple-cache:/ple-cache
     environment:
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN}
       - HF_HUB_OFFLINE=1
-    command: >-
-      vllm serve
-      --model /models/unsloth--Qwen3.8-27B-NVFP4
-      --served-model-name qwen3.8-27b
-      --host 0.0.0.0
-      --port 8000
-      --tensor-parallel-size 1
-      --gpu-memory-utilization 0.85
-      --max-model-len 262144
-      --max-num-seqs 8
-      --max-num-batched-tokens 32768
-      --enable-chunked-prefill
-      --enable-prefix-caching
-      --reasoning-parser qwen3
-      --tool-call-parser qwen3_xml
-      --enable-auto-tool-choice
-      --distributed-executor-backend mp
-      --default-chat-template-kwargs '{"reasoning_effort":"medium"}'
-      --speculative-config '{"method":"mtp","num_speculative_tokens":5}'
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        rm -rf /ple-cache/* &&
+        exec sglang serve
+        --model-path /models/RadixArk--Qwen3.8-Flash-Next-NVFP4
+        --served-model-name qwen3.8-flash-next
+        --host 0.0.0.0
+        --port 8000
+        --tp 1
+        --ple-offload-embedding
+        --ple-offload-backend file
+        --ple-offload-dir /ple-cache
+        --mem-fraction-static 0.85
+        --max-running-requests 8
+        --reasoning-parser auto
+        --tool-call-parser auto
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8000/v1/models || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 10
-      start_period: 240s
+      start_period: 900s
     deploy:
       resources:
         reservations:
