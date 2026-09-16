@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
-Benchmark vLLM throughput and latency.
+Benchmark throughput and latency (written against vLLM; not re-verified
+against the current SGLang backend, see ADR 0016/0017 - the reasoning/content
+delta split below is vLLM-specific and may not hold as-is).
 Measures TTFT and tokens/second using streaming for two workloads:
   - short: quick factual prompt (minimal thinking)
   - long: multi-step reasoning prompt (heavy thinking)
@@ -17,7 +19,7 @@ from dataclasses import dataclass, field
 
 
 BASE_URL = "http://localhost:8000"
-MODEL = "qwen3.8-27b"
+MODEL = "qwen3.8-flash-next"
 
 PROMPTS = {
     "no_think": {
@@ -164,7 +166,7 @@ def stream_completion(base_url: str, payload: dict) -> Result:
 
 
 def run_benchmark(base_url: str, runs: int):
-    print(f"\nvLLM Benchmark  |  {base_url}  |  model={MODEL}  |  runs={runs}\n")
+    print(f"\nBenchmark  |  {base_url}  |  model={MODEL}  |  runs={runs}\n")
     print(f"{'Prompt':<16} {'TTFT(s)':>8} {'TTFAT(s)':>9} {'Total(s)':>9} {'CmpTok':>7} {'ThinkTok':>9} {'AnsTok':>7} {'ans tok/s':>10}")
     print("-" * 80)
 
