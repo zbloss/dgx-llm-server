@@ -1,0 +1,61 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/mostlygeek/llama-swap/v260/config-schema.json
+#
+# llama-swap config (ADR 0019). Reloaded on change via -watch-config: the
+# GitOps workflow copying a new version into place is enough, no restart.
+# llama-swap listens on 127.0.0.1:8080 behind the gate (gate/gate.py), which
+# owns the public :8000.
+
+# SGLang's cold start repopulates the ~47.7GB PLE table (~10 min, ADR 0016).
+# Clients just block through it: sendLoadingState stays off.
+healthCheckTimeout: 3600
+sendLoadingState: false
+logToStdout: "proxy,upstream"
+
+macros:
+  # Runs inside the llama-swap container against the host's docker socket.
+  # The repo is mounted at its host path, so compose resolves the project
+  # exactly as it does on the host.
+  compose: >-
+    docker compose -p dgx-llm-server
+    -f /home/zbloss/Projects/dgx-llm-server/compose.yaml
+    --profile managed
+
+# ADR 0003, restated: never scrape a path that can start a model. Prometheus
+# scrapes /upstream/qwen3.8-flash-next/metrics; this makes that path proxy
+# only to a model that is already Ready (409 otherwise, no swap). Verified
+# against llama-swap v260 internal/server/api.go handleUpstream.
+upstream:
+  ignorePaths:
+    - '^/metrics$'
+
+models:
+  qwen3.8-flash-next:
+    # Attached `up`: the process lives as long as the container, so an
+    # unexpected exit (mem-watchdog's docker kill, a crash) ends it and the
+    # next request relaunches the model.
+    cmd: ${compose} up --force-recreate --no-log-prefix sglang-server
+    cmdStop: ${compose} stop sglang-server
+    proxy: http://127.0.0.1:30000
+    checkEndpoint: /health
+    ttl: 0
+    # docker stop gives SGLang its own 10s grace; allow for that plus compose.
+    unloadTimeout: 60
+
+routing:
+  router:
+    use: group
+    settings:
+      groups:
+        # The `generation` group (ComfyUI + QA, exclusive with llm, ttl 0)
+        # is added once ai-grifting deploys its compose file on the Spark;
+        # its members must also be listed in the gate's GENERATION_MODELS.
+        llm:
+          swap: true
+          exclusive: true
+          members:
+            - qwen3.8-flash-next
+
+hooks:
+  on_startup:
+    preload:
+      - qwen3.8-flash-next

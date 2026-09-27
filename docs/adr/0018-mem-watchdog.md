@@ -1,6 +1,6 @@
 # ADR 0018: Host-side memory watchdog for unified-memory exhaustion
 
-**Status:** Accepted — unverified pending deploy
+**Status:** Accepted — unverified pending deploy; amended by ADR 0019 (targets containers by label; recovery is llama-swap relaunching on the next request)
 **Date:** 2026-09-16
 **Amends:** ADR 0016 (closes the memory-watchdog gap flagged there but never built); resolves wayfinder map [#28](https://github.com/zbloss/dgx-llm-server/issues/28) ticket [#38](https://github.com/zbloss/dgx-llm-server/issues/38)
 
@@ -41,3 +41,7 @@ Add a `mem-watchdog` sidecar service to `compose.yaml`:
 - **4 GiB threshold is a judgment call**, not a measured line. If it fires spuriously during normal load (e.g., a long-context request transiently pushing `MemAvailable` down without genuine runaway growth), raise it or extend `COOLDOWN_SECONDS`; if a real exhaustion event still hangs the box before the watchdog polls, lower `POLL_INTERVAL_SECONDS` or raise the threshold further.
 - Resolves map #28's "Not yet specified" watchdog item and closes ticket #38.
 - `CONTEXT.md` updated alongside this ADR, per repo convention.
+
+## Amendment (ADR 0019)
+
+With llama-swap owning model lifecycles, `sglang-server` is `restart: "no"`, so the recovery path above no longer applies. The watchdog now `docker kill`s every running container labelled `llama-swap.managed=true` (env `TARGET_LABEL`), not the one fixed container name. That covers future generation-group services (ComfyUI, QA) too. After a kill, llama-swap's attached `docker compose up` exits, the model is marked stopped, and the next request relaunches it (with the same fresh-PLE-table entrypoint). A Temporal activity interrupted mid-render fails and retries.

@@ -1,10 +1,56 @@
 services:
-  sglang-server:
-    image: lmsysorg/sglang:dev-qwen38-next-local
+  gate:
+    # ADR 0019: the Spark's front door on :8000 (Traefik's target, unchanged).
+    # Proxies to llama-swap; while a Window hold is active it answers LLM
+    # requests with a fast 503 + Retry-After. Hold admin API on 127.0.0.1:8001
+    # only (POST/PUT/DELETE/GET /hold), for the nightly Generation window.
+    image: python:3.12-alpine
     restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./gate/gate.py:/gate.py:ro
+    environment:
+      - GATE_LISTEN=0.0.0.0:8000
+      - GATE_ADMIN_LISTEN=127.0.0.1:8001
+      - GATE_UPSTREAM=127.0.0.1:8080
+      - HOLD_TTL_SECONDS=1800
+      # llama-swap `generation` group members, comma-separated. Empty until
+      # ai-grifting's generation compose file lands (see llama-swap/config.yaml).
+      - GENERATION_MODELS=
+    command: ["python", "-u", "/gate.py"]
+
+  llama-swap:
+    # ADR 0019: owns the lifecycle of every service under `profiles: [managed]`,
+    # launching them through the host's docker socket. Preloads
+    # qwen3.8-flash-next on boot (hooks.on_startup in llama-swap/config.yaml).
+    build: ./llama-swap
+    image: dgx-llm-server/llama-swap:260
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Mounted at its host path so `docker compose` inside resolves the
+      # project identically, and -watch-config sees the workflow's copies.
+      - /home/zbloss/Projects/dgx-llm-server:/home/zbloss/Projects/dgx-llm-server:ro
+    command:
+      - -config
+      - /home/zbloss/Projects/dgx-llm-server/llama-swap/config.yaml
+      - -listen
+      - 127.0.0.1:8080
+      - -watch-config
+
+  sglang-server:
+    # Managed by llama-swap (ADR 0019): not started by a plain `docker compose
+    # up`, restart "no" so llama-swap alone decides when it runs, and the
+    # label is what mem-watchdog targets. Localhost only - reached via
+    # llama-swap's proxy on 127.0.0.1:30000.
+    image: lmsysorg/sglang:dev-qwen38-next-local
+    profiles: [managed]
+    restart: "no"
+    labels:
+      - llama-swap.managed=true
     shm_size: "2g"
-    ports:
-      - "8000:8000"
+    network_mode: host
     volumes:
       - /home/zbloss/models:/models:ro
       - /home/zbloss/.cache/sglang:/root/.cache/sglang
@@ -20,8 +66,8 @@ services:
         exec sglang serve
         --model-path /models/nvidia--Qwen3.8-Flash-Next-NVFP4
         --served-model-name qwen3.8-flash-next
-        --host 0.0.0.0
-        --port 8000
+        --host 127.0.0.1
+        --port 30000
         --tp 1
         --moe-runner-backend flashinfer_cutlass
         --fp4-gemm-backend flashinfer_cutlass
@@ -42,7 +88,7 @@ services:
         --tool-call-parser auto
         --enable-metrics
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/v1/models || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:30000/v1/models || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 10
@@ -56,12 +102,13 @@ services:
               capabilities: [gpu]
 
   mem-watchdog:
-    # ADR 0018: SGLang's DGX Spark cookbook notes that unified-memory
-    # exhaustion "can take the whole box down and needs a power cycle to
-    # recover" (same failure class as ADR 0012/0014's FlashInfer-autotune
-    # incident). Kills sglang-server before that happens; restart:
-    # unless-stopped + its own entrypoint wrapper bring it back with a
-    # fresh PLE table, same as any other crash-and-recover path.
+    # ADR 0018 (amended by ADR 0019): SGLang's DGX Spark cookbook notes that
+    # unified-memory exhaustion "can take the whole box down and needs a
+    # power cycle to recover" (same failure class as ADR 0012/0014's
+    # FlashInfer-autotune incident). Kills every running llama-swap-managed
+    # container before that happens; the next request makes llama-swap
+    # relaunch the model (SGLang's entrypoint wrapper gives it a fresh PLE
+    # table), and an interrupted Temporal activity fails and retries.
     image: docker:27-cli
     restart: unless-stopped
     volumes:
@@ -69,7 +116,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - MEM_AVAILABLE_MIN_KB=4194304
-      - TARGET_CONTAINER=dgx-llm-server-sglang-server-1
+      - TARGET_LABEL=llama-swap.managed=true
       - POLL_INTERVAL_SECONDS=10
       - COOLDOWN_SECONDS=120
     entrypoint: ["sh", "-c"]
@@ -78,8 +125,9 @@ services:
         while true; do
           avail_kb=$$(awk '/MemAvailable/ {print $$2}' /host/proc/meminfo);
           if [ "$$avail_kb" -lt "$$MEM_AVAILABLE_MIN_KB" ]; then
-            echo "$$(date -u +%Y-%m-%dT%H:%M:%SZ) [mem-watchdog] MemAvailable=$${avail_kb}KB below threshold=$${MEM_AVAILABLE_MIN_KB}KB - killing $$TARGET_CONTAINER";
-            docker kill "$$TARGET_CONTAINER" || echo "docker kill failed (already down?)";
+            targets=$$(docker ps -q --filter "label=$$TARGET_LABEL" | tr "\n" " ");
+            echo "$$(date -u +%Y-%m-%dT%H:%M:%SZ) [mem-watchdog] MemAvailable=$${avail_kb}KB below threshold=$${MEM_AVAILABLE_MIN_KB}KB - killing containers labelled $$TARGET_LABEL: $${targets:-none running}";
+            [ -n "$$targets" ] && { docker kill $$targets || echo "docker kill failed (already down?)"; };
             sleep "$$COOLDOWN_SECONDS";
           fi;
           sleep "$$POLL_INTERVAL_SECONDS";
