@@ -1,6 +1,7 @@
 # ADR 0016: Replace qwen3.8-27b with Qwen3.8-Flash-Next via SGLang's single-GB10 NVMe-PLE recipe
 
 **Status:** Accepted — unverified pending deploy
+**Partially superseded:** by ADR 0019, for the "one resident model, no swap-by-name" stance only (llama-swap now owns the model lifecycle); everything else here stands.
 **Date:** 2026-09-16
 **Amends:** ADR 0010 (replaces the served model and the serving backend); revisits ADR 0013's rejection of a full SGLang migration, now scoped narrowly to this one model
 

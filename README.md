@@ -8,7 +8,8 @@ Serves a quantized LLM from a DGX Spark over the local network via an OpenAI-com
 
 ## How it works
 
-- **A single SGLang server** (`lmsysorg/sglang:dev-qwen38-next-local`) serves `RadixArk/Qwen3.8-Flash-Next-NVFP4` on port 8000. There is no model-swap-by-name - one model, always resident.
+- **The gate** (`gate/gate.py`, ADR 0019) is the front door on port 8000. It proxies everything to **llama-swap** on `127.0.0.1:8080`, except while a **Window hold** is active: then LLM requests get a fast `503` with `Retry-After` so a nightly Generation window can have the GPU. The hold's admin API listens on `127.0.0.1:8001` only.
+- **llama-swap** owns the lifecycle of every service under `profiles: [managed]` in `compose.yaml`, launching them through the Docker socket. Today that is one model, `qwen3.8-flash-next` (SGLang, `lmsysorg/sglang:dev-qwen38-next-local`, on `127.0.0.1:30000`), preloaded on boot. If it dies (a crash, or `mem-watchdog` killing it), the next request relaunches it.
 - **`models/models.json`** is the GitOps manifest: push a change here and the self-hosted GitHub Actions runner on the DGX Spark downloads the new HuggingFace repo, removes the obsolete one, and restarts the stack.
 - **`compose.yaml`** carries the SGLang launch flags (context length, batching, PLE-table NVMe offload, tool/reasoning parsers) - edit it directly to retune the model. The container's `entrypoint` is overridden to delete and repopulate the ~47.7GB PLE table on every start (see `docs/adr/0016-qwen38-flash-next-sglang-nvme-ple.md`), so expect a 10-15 minute startup window, not a few seconds.
 - **Traefik** in the homelab K8s cluster terminates TLS and routes `dgx.blosshomelab.com` to the DGX Spark's fixed IP on port 8000. The manifests that actually do this live in the `home-server` GitOps repo (`kubernetes/apps/ml/dgx-vllm/`, Flux-managed) - `k8s/` in *this* repo is an illustrative example only, kept for reference, not applied anywhere.
@@ -36,9 +37,9 @@ Follow the instructions, and when prompted for labels add `dgx-spark`.
 ```bash
 docker compose up -d
 ```
-Watch progress as the model loads (expect 10-15 minutes while the PLE table repopulates):
+This starts the gate, llama-swap and mem-watchdog; llama-swap then preloads `sglang-server`. Watch progress as the model loads (expect 10-15 minutes while the PLE table repopulates):
 ```bash
-docker compose logs -f sglang-server
+docker compose logs -f llama-swap
 ```
 
 **3. Enable the systemd service so the stack starts on boot:**
@@ -86,7 +87,7 @@ Push any change to `models/models.json` or `compose.yaml`, or run the workflow m
 2. Update `compose.yaml`'s `--model-path` / `--served-model-name` to match the new local path and repo id.
 3. Push to `main`.
 
-The GitHub Actions workflow runs on the DGX Spark, downloads the new model, removes the obsolete directory, and restarts the stack.
+The GitHub Actions workflow runs on the DGX Spark, waits out any active Window hold, downloads the new model, removes the obsolete directory, applies the stack, and - if `sglang-server`'s definition changed - unloads and re-warms the model through llama-swap.
 
 ---
 
@@ -152,9 +153,21 @@ env:
 
 After startup, confirm the model loaded successfully:
 ```bash
-docker compose logs sglang-server | grep -i "error\|loaded weights"
+docker compose logs llama-swap | grep -i "error\|loaded weights"
+curl -s http://localhost:8000/running | jq .
 curl -s http://localhost:8000/v1/models | jq .
 ```
+
+## Window hold
+
+The nightly Generation window (ai-grifting) opens a hold before it takes the GPU, renews it by heartbeat, and releases it when done. Unrenewed, it lapses after 30 minutes. From the Spark only:
+```bash
+curl -s -X POST   http://127.0.0.1:8001/hold   # open (or renew)
+curl -s -X PUT    http://127.0.0.1:8001/hold   # renew - also re-opens a hold a gate restart dropped
+curl -s           http://127.0.0.1:8001/hold   # {"active": ..., "expires_in": seconds}
+curl -s -X DELETE http://127.0.0.1:8001/hold   # release
+```
+While it is active, only `/v1/models`, `/models`, `/health`, `/metrics`, `/running` and generation-group models get through the gate; everything else gets a `503`. Processes on the Spark that must not be blocked call llama-swap on `127.0.0.1:8080` directly.
 
 ---
 
@@ -162,7 +175,10 @@ curl -s http://localhost:8000/v1/models | jq .
 
 | File | Purpose |
 |---|---|
-| `compose.yaml` | Docker Compose: single `sglang-server` container with all SGLang launch flags |
+| `compose.yaml` | Docker Compose: the gate, llama-swap, mem-watchdog, and the llama-swap-managed `sglang-server` (all SGLang launch flags) |
+| `gate/gate.py` | The front door on :8000 and the Window hold admin API (stdlib only; tests in `tests/`) |
+| `llama-swap/config.yaml` | llama-swap models, groups, boot preload; reloaded on change |
+| `llama-swap/Dockerfile` | llama-swap on the `docker:27-cli` image, so it can drive compose |
 | `models/models.json` | GitOps manifest: HuggingFace repo (and optional quant filter) for the model |
 | `k8s/*.yaml` | Illustrative examples only - not applied anywhere. The real manifests (Service, IngressRoute/HTTPRoute, ServiceMonitor) live in `home-server`'s `kubernetes/apps/ml/dgx-vllm/`, Flux-managed. |
 | `.github/workflows/sync-models.yml` | GitOps workflow (runs on DGX Spark self-hosted runner) |
