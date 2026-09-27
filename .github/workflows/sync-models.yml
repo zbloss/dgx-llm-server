@@ -19,6 +19,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Wait out any active Window hold
+        # ADR 0019: first, so nothing here (downloads, restarting the gate or
+        # llama-swap, warming Flash-Next) runs during a Generation window.
+        # Defer until the hold is released or lapses. Before the first
+        # cutover there is no gate on :8001, which counts as no hold.
+        timeout-minutes: 300
+        run: |
+          while curl -sf http://127.0.0.1:8001/hold | grep -q '"active": true'; do
+            echo "Window hold active - retrying in 5 minutes"
+            sleep 300
+          done
+
       - name: Install uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
@@ -41,23 +53,16 @@ jobs:
         run: |
           rm -rf /home/zbloss/sglang-ple-cache/* || echo "::warning::Could not clear PLE cache from CI (likely permission denied - files are root-owned by the container). Non-fatal: compose.yaml's entrypoint wrapper clears this directory as root on every container start (ADR 0016)."
 
-      - name: Wait out any active Window hold
-        # ADR 0019: recreating the gate drops the hold, and restarting
-        # llama-swap or warming Flash-Next would take the GPU from a running
-        # Generation window. Defer until it's released or lapses. Before the
-        # first cutover there is no gate on :8001, which counts as no hold.
-        timeout-minutes: 300
-        run: |
-          while curl -sf http://127.0.0.1:8001/hold | grep -q '"active": true'; do
-            echo "Window hold active - retrying in 5 minutes"
-            sleep 300
-          done
-
       - name: Apply compose changes
         working-directory: /home/zbloss/Projects/dgx-llm-server
         run: |
           old_hash=$(docker compose --profile managed config --hash sglang-server 2>/dev/null || true)
           echo "OLD_SGLANG_HASH=$old_hash" >> "$GITHUB_ENV"
+
+          # gate.py is bind-mounted, so compose won't see a change to it:
+          # restart the gate explicitly when it differs.
+          gate_changed=false
+          cmp -s $GITHUB_WORKSPACE/gate/gate.py gate/gate.py || gate_changed=true
 
           cp $GITHUB_WORKSPACE/compose.yaml .
           mkdir -p gate llama-swap
@@ -72,19 +77,29 @@ jobs:
             if [ "$(docker inspect -f '{{index .Config.Labels "llama-swap.managed"}}' "$c")" != "true" ]; then
               echo "Removing unmanaged sglang-server container $c"
               docker rm -f "$c"
+              # llama-swap's boot preload starts the new one; don't unload it
+              # mid-load just to warm it again.
+              echo "CUTOVER=true" >> "$GITHUB_ENV"
             fi
           done
 
           # sglang-server is under `profiles: [managed]`, so this only
           # touches the gate, llama-swap and mem-watchdog.
           docker compose up -d --build --remove-orphans
+          if [ "$gate_changed" = true ]; then docker compose restart gate; fi
 
       - name: Relaunch Flash-Next if its definition changed
         working-directory: /home/zbloss/Projects/dgx-llm-server
         run: |
           new_hash=$(docker compose --profile managed config --hash sglang-server)
-          if [ "$new_hash" = "$OLD_SGLANG_HASH" ]; then
-            echo "sglang-server unchanged - leaving the running model alone"
+          if [ "$new_hash" = "$OLD_SGLANG_HASH" ] || [ "$CUTOVER" = true ]; then
+            echo "sglang-server unchanged (or just preloaded by cutover) - leaving the model alone"
+            exit 0
+          fi
+          # A hold may have opened since the wait step; the Generation
+          # window warms Flash-Next itself when it ends.
+          if curl -sf http://127.0.0.1:8001/hold | grep -q '"active": true'; then
+            echo "::warning::Window hold opened mid-deploy - skipping the relaunch; the Generation window warms Flash-Next when it releases"
             exit 0
           fi
           echo "sglang-server changed - unloading and warming qwen3.8-flash-next"

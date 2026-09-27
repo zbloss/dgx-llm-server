@@ -10,7 +10,7 @@ Serves a quantized LLM from a DGX Spark over the local network via an OpenAI-com
 
 - **The gate** (`gate/gate.py`, ADR 0019) is the front door on port 8000. It proxies everything to **llama-swap** on `127.0.0.1:8080`, except while a **Window hold** is active: then LLM requests get a fast `503` with `Retry-After` so a nightly Generation window can have the GPU. The hold's admin API listens on `127.0.0.1:8001` only.
 - **llama-swap** owns the lifecycle of every service under `profiles: [managed]` in `compose.yaml`, launching them through the Docker socket. Today that is one model, `qwen3.8-flash-next` (SGLang, `lmsysorg/sglang:dev-qwen38-next-local`, on `127.0.0.1:30000`), preloaded on boot. If it dies (a crash, or `mem-watchdog` killing it), the next request relaunches it.
-- **`models/models.json`** is the GitOps manifest: push a change here and the self-hosted GitHub Actions runner on the DGX Spark downloads the new HuggingFace repo, removes the obsolete one, and restarts the stack.
+- **`models/models.json`** is the GitOps manifest: push a change here (or to `compose.yaml`, `gate/gate.py`, `llama-swap/`) and the self-hosted GitHub Actions runner on the DGX Spark waits out any Window hold, downloads the new HuggingFace repo, removes the obsolete one, and applies the stack.
 - **`compose.yaml`** carries the SGLang launch flags (context length, batching, PLE-table NVMe offload, tool/reasoning parsers) - edit it directly to retune the model. The container's `entrypoint` is overridden to delete and repopulate the ~47.7GB PLE table on every start (see `docs/adr/0016-qwen38-flash-next-sglang-nvme-ple.md`), so expect a 10-15 minute startup window, not a few seconds.
 - **Traefik** in the homelab K8s cluster terminates TLS and routes `dgx.blosshomelab.com` to the DGX Spark's fixed IP on port 8000. The manifests that actually do this live in the `home-server` GitOps repo (`kubernetes/apps/ml/dgx-vllm/`, Flux-managed) - `k8s/` in *this* repo is an illustrative example only, kept for reference, not applied anywhere.
 - The endpoint has no API key auth - access is scoped by network/Traefik routing, not by a bearer token.
@@ -77,7 +77,7 @@ The manifests that actually route `dgx.blosshomelab.com` live in the `home-serve
 
 **6. Trigger the first model download:**
 
-Push any change to `models/models.json` or `compose.yaml`, or run the workflow manually from the Actions tab.
+Push any change to `models/models.json`, `compose.yaml`, `gate/gate.py` or `llama-swap/`, or run the workflow manually from the Actions tab.
 
 ---
 

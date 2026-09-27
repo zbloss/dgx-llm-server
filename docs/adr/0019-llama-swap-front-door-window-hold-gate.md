@@ -8,7 +8,7 @@
 
 ## Context
 
-The ai-grifting content pipeline needs the Spark's GPU for a nightly **Generation window** (ComfyUI plus a QA service). Flash-Next alone fills the Spark's 128GB of unified memory (ADR 0016), so the two can't coexist. Something has to swap them by request, and during the window LLM clients have to be refused rather than trigger a 10-minute Flash-Next reload that would evict generation.
+The ai-grifting content pipeline needs the Spark's GPU for a nightly **Generation window** (ai-grifting's term: the nightly period its batch of ComfyUI + QA work runs in). Flash-Next alone fills the Spark's 128GB of unified memory (ADR 0016), so the two can't coexist. Something has to swap them by request, and during the window LLM clients have to be refused rather than trigger a 10-minute Flash-Next reload that would evict generation.
 
 llama-swap does request-driven swapping with mutually exclusive groups. It has no notion of a time-limited "refuse this group for now" lease, so that part lives in a small sidecar in front of it.
 
@@ -63,11 +63,13 @@ All of them use `network_mode: host`.
 3. Runs `docker compose up -d --build --remove-orphans`, which touches only the gate, llama-swap and mem-watchdog.
 4. If `docker compose --profile managed config --hash sglang-server` changed, calls `POST /api/models/unload/qwen3.8-flash-next`, then warms the model through `/upstream/qwen3.8-flash-next/health`.
 
+The hold wait comes first, before model downloads. Because `gate.py` is bind-mounted, compose can't see a change to it, so the workflow restarts the gate when the file differs. On the cutover run, step 2 sets `CUTOVER` and step 4 is skipped, because the boot preload is already loading the new definition. Step 4 is also skipped, with a warning, if a hold opened after step 1. The Generation window warms Flash-Next itself when it releases. A hold opened between step 1 and a gate restart is still dropped until the next heartbeat, the same gap as any gate restart.
+
 This relaxes the "only `compose.yaml` is distributed" precedent of ADR 0016/0018. The gate and the llama-swap config are real files with their own tests and schema, which inlining them into `compose.yaml` would lose.
 
 ## Alternatives considered
 
-- **The hold inside llama-swap** (config edit, or a hook). llama-swap has no lease primitive. Toggling config under `-watch-config` from Temporal gives no automatic lapse if the Batch dies, and races the GitOps workflow.
+- **The hold inside llama-swap** (config edit, or a hook). llama-swap has no lease primitive. Toggling config under `-watch-config` from Temporal gives no automatic lapse if the workflow dies, and races the GitOps workflow.
 - **`sendLoadingState: true`.** This streams loading messages into the reasoning field. Agentic clients (Hermes, Dev Loop, Claude Code) would treat them as model output, so they block instead.
 - **A llama.cpp-bundled llama-swap image.** It carries an unused inference server and no docker CLI.
 

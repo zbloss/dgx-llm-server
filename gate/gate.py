@@ -20,9 +20,12 @@ from typing import Callable
 
 # Never start a model, so they stay reachable during a hold.
 OPEN_PATHS = {"/v1/models", "/models", "/health", "/metrics", "/running"}
-HOP_BY_HOP = {
+# Hop-by-hop headers, plus the body framing ones: the gate re-frames every
+# response itself (Content-Length or its own chunking).
+NOT_FORWARDED = {
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
     "te", "trailers", "transfer-encoding", "upgrade", "content-length",
+    "server", "date",  # send_response adds the gate's own
 }
 # Longer than llama-swap's healthCheckTimeout (3600s): a cold start blocks the
 # request, it doesn't fail it.
@@ -40,7 +43,7 @@ class Hold:
         self._expires_at = 0.0
         self._lock = threading.Lock()
 
-    def acquire(self) -> None:
+    def open(self) -> None:
         """Open or renew: the lease runs `ttl` seconds from now."""
         with self._lock:
             self._expires_at = self._clock() + self._ttl
@@ -68,7 +71,7 @@ def allowed_during_hold(path: str, body: bytes, generation_models: set[str]) -> 
         return any(path == f"/upstream/{m}" or path.startswith(f"/upstream/{m}/") for m in generation_models)
     try:
         return json.loads(body).get("model") in generation_models
-    except (ValueError, AttributeError):
+    except (ValueError, AttributeError, TypeError):  # bad JSON, not an object, unhashable model
         return False
 
 
@@ -84,40 +87,50 @@ def _read_body(handler: BaseHTTPRequestHandler) -> bytes:
     return handler.rfile.read(int(handler.headers.get("Content-Length", 0)))
 
 
+def _path(handler: BaseHTTPRequestHandler) -> str:
+    return handler.path.split("?", 1)[0]
+
+
+def _send_json(handler: BaseHTTPRequestHandler, status: int, payload: object, headers: dict[str, str] = {}) -> None:
+    body = json.dumps(payload).encode()
+    handler.send_response(status)
+    for k, v in {**headers, "Content-Type": "application/json", "Content-Length": str(len(body))}.items():
+        handler.send_header(k, v)
+    handler.end_headers()
+    handler.wfile.write(body)
+
+
 def make_servers(
     upstream: str,
     public_addr: tuple[str, int],
     admin_addr: tuple[str, int],
     hold: Hold,
     generation_models: set[str],
+    upstream_timeout: float = UPSTREAM_TIMEOUT_SECONDS,
 ) -> tuple[ThreadingHTTPServer, ThreadingHTTPServer]:
     class Public(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
         def _handle(self) -> None:
             body = _read_body(self)
-            path = self.path.split("?", 1)[0]
-            if hold.active() and not allowed_during_hold(path, body, generation_models):
-                msg = b'{"error":{"message":"Generation window in progress; the LLM is unavailable","type":"window_hold"}}'
-                self.send_response(503)
-                self.send_header("Retry-After", str(max(1, hold.remaining())))
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(msg)))
-                self.end_headers()
-                self.wfile.write(msg)
+            if hold.active() and not allowed_during_hold(_path(self), body, generation_models):
+                error = {"message": "Window hold active: the LLM is unavailable", "type": "window_hold"}
+                _send_json(self, 503, {"error": error}, {"Retry-After": str(max(1, hold.remaining()))})
                 return
             self._proxy(body)
 
         def _proxy(self, body: bytes) -> None:
-            headers = {k: v for k, v in self.headers.items() if k.lower() not in HOP_BY_HOP}
+            headers = {k: v for k, v in self.headers.items() if k.lower() not in NOT_FORWARDED}
             headers["X-Forwarded-For"] = self.client_address[0]
-            conn = http.client.HTTPConnection(upstream, timeout=UPSTREAM_TIMEOUT_SECONDS)
+            conn = http.client.HTTPConnection(upstream, timeout=upstream_timeout)
+            started = False
             try:
                 conn.request(self.command, self.path, body=body or None, headers=headers)
                 resp = conn.getresponse()
                 self.send_response(resp.status, resp.reason)
+                started = True
                 for k, v in resp.getheaders():
-                    if k.lower() not in HOP_BY_HOP:
+                    if k.lower() not in NOT_FORWARDED:
                         self.send_header(k, v)
                 length = resp.getheader("Content-Length")
                 if length is not None:
@@ -131,10 +144,14 @@ def make_servers(
                 while chunk := resp.read1(65536):
                     self.wfile.write(b"%x\r\n%s\r\n" % (len(chunk), chunk))
                 self.wfile.write(b"0\r\n\r\n")
-            except (BrokenPipeError, ConnectionResetError):
-                self.close_connection = True  # client went away; dropping upstream cancels it
-            except OSError as e:
-                self.send_error(502, f"llama-swap unreachable: {e}")
+            except (OSError, http.client.HTTPException) as e:
+                if started:
+                    # Mid-response (upstream died, or the client went away):
+                    # all we can do is cut it short. Dropping the upstream
+                    # connection cancels the request in llama-swap.
+                    self.close_connection = True
+                else:
+                    self.send_error(502, f"llama-swap unreachable: {e}")
             finally:
                 conn.close()
 
@@ -145,19 +162,14 @@ def make_servers(
 
         def _handle(self) -> None:
             _read_body(self)
-            if self.path.split("?", 1)[0] != "/hold":
+            if _path(self) != "/hold":
                 self.send_error(404)
                 return
             if self.command in ("POST", "PUT"):
-                hold.acquire()  # PUT also re-opens a hold a gate restart dropped
+                hold.open()  # PUT renews, and re-opens a hold a gate restart dropped
             elif self.command == "DELETE":
                 hold.release()
-            payload = json.dumps({"active": hold.active(), "expires_in": hold.remaining()}).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
+            _send_json(self, 200, {"active": hold.active(), "expires_in": hold.remaining()})
 
         do_GET = do_POST = do_PUT = do_DELETE = _handle
 

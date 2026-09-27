@@ -1,5 +1,6 @@
 import http.client
 import json
+import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Iterator
@@ -26,7 +27,7 @@ def test_hold_is_inactive_until_opened_and_after_release():
     hold = Hold(ttl=TTL, clock=clock)
     assert not hold.active()
 
-    hold.acquire()
+    hold.open()
     assert hold.active()
     assert hold.remaining() == TTL
 
@@ -37,7 +38,7 @@ def test_hold_is_inactive_until_opened_and_after_release():
 def test_hold_lapses_after_ttl_without_renewal():
     clock = FakeClock()
     hold = Hold(ttl=TTL, clock=clock)
-    hold.acquire()
+    hold.open()
 
     clock.now += TTL - 1
     assert hold.active()
@@ -49,10 +50,10 @@ def test_hold_lapses_after_ttl_without_renewal():
 def test_renewal_extends_the_lease_from_now():
     clock = FakeClock()
     hold = Hold(ttl=TTL, clock=clock)
-    hold.acquire()
+    hold.open()
 
     clock.now += TTL - 10
-    hold.acquire()
+    hold.open()
     clock.now += TTL - 1
     assert hold.active()
 
@@ -72,6 +73,13 @@ class FakeLlamaSwap(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length)
         FakeLlamaSwap.seen.append((self.command, self.path, body))
+        if self.path == "/stalls-mid-stream":
+            self.send_response(200)
+            self.send_header("Transfer-Encoding", "chunked")
+            self.end_headers()
+            self._chunk(b"data: one\n\n")
+            FakeLlamaSwap.release_second_event.wait(timeout=5)
+            return
         if self.path == "/stream":
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
@@ -139,6 +147,7 @@ def gate() -> Iterator[Gate]:
         admin_addr=("127.0.0.1", 0),
         hold=hold,
         generation_models={GENERATION},
+        upstream_timeout=0.5,
     )
     _serve(public)
     _serve(admin)
@@ -171,7 +180,7 @@ def test_streamed_responses_are_not_buffered(gate):
 
 
 def test_an_active_hold_refuses_llm_requests_with_retry_after(gate):
-    gate.hold.acquire()
+    gate.hold.open()
     resp = gate.chat(LLM)
     assert resp.status == 503
     assert 0 < int(resp.getheader("Retry-After")) <= TTL
@@ -191,14 +200,14 @@ def test_an_active_hold_refuses_llm_requests_with_retry_after(gate):
     ],
 )
 def test_an_active_hold_refuses_every_route_that_can_start_an_llm(gate, path):
-    gate.hold.acquire()
+    gate.hold.open()
     resp = gate.request("POST", path, {"model": LLM})
     assert resp.status == 503
     resp.read()
 
 
 def test_a_request_with_no_readable_model_is_refused_during_a_hold(gate):
-    gate.hold.acquire()
+    gate.hold.open()
     resp = gate.request("POST", "/v1/chat/completions", b"not json")
     assert resp.status == 503
     resp.read()
@@ -206,14 +215,14 @@ def test_a_request_with_no_readable_model_is_refused_during_a_hold(gate):
 
 @pytest.mark.parametrize("path", ["/v1/models", "/models", "/health", "/metrics", "/running"])
 def test_an_active_hold_leaves_the_open_paths_open(gate, path):
-    gate.hold.acquire()
+    gate.hold.open()
     resp = gate.request("GET", path)
     assert resp.status == 200
     resp.read()
 
 
 def test_an_active_hold_lets_generation_group_models_through(gate):
-    gate.hold.acquire()
+    gate.hold.open()
     by_body = gate.chat(GENERATION)
     assert by_body.status == 200
     by_body.read()
@@ -263,4 +272,23 @@ def test_the_admin_api_is_not_served_on_the_public_port(gate):
 def test_admin_api_rejects_unknown_paths(gate):
     resp = gate.request("GET", "/nope", admin=True)
     assert resp.status == 404
+    resp.read()
+
+
+def test_an_upstream_stalling_mid_stream_truncates_rather_than_corrupting(gate):
+    sock = socket.create_connection(("127.0.0.1", gate.public_port), timeout=5)
+    sock.sendall(b"GET /stalls-mid-stream HTTP/1.1\r\nHost: x\r\n\r\n")
+    raw = b""
+    while chunk := sock.recv(65536):  # the gate closes once its upstream read times out
+        raw += chunk
+    FakeLlamaSwap.release_second_event.set()
+    assert raw.count(b"HTTP/1.1 ") == 1  # no 502 status line spliced into the stream
+    assert raw.count(b"\r\nDate: ") == 1
+    assert b"data: one" in raw
+
+
+def test_a_non_string_model_is_refused_during_a_hold(gate):
+    gate.hold.open()
+    resp = gate.request("POST", "/v1/chat/completions", {"model": ["a", "b"]})
+    assert resp.status == 503
     resp.read()
