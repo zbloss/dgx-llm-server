@@ -12,7 +12,7 @@ Serves a quantized LLM from a DGX Spark over the local network via an OpenAI-com
 - **llama-swap** owns the lifecycle of every service under `profiles: [managed]` in `compose.yaml`, launching them through the Docker socket. Today that is one model, `qwen3.8-flash-next` (SGLang, `lmsysorg/sglang:dev-qwen38-next-local`, on `127.0.0.1:30000`), preloaded on boot. If it dies (a crash, or `mem-watchdog` killing it), the next request relaunches it.
 - **`models/models.json`** is the GitOps manifest: push a change here (or to `compose.yaml`, `gate/gate.py`, `llama-swap/`) and the self-hosted GitHub Actions runner on the DGX Spark waits out any Window hold, downloads the new HuggingFace repo, removes the obsolete one, and applies the stack.
 - **`compose.yaml`** carries the SGLang launch flags (context length, batching, PLE-table NVMe offload, tool/reasoning parsers) - edit it directly to retune the model. The container's `entrypoint` is overridden to delete and repopulate the ~47.7GB PLE table on every start (see `docs/adr/0016-qwen38-flash-next-sglang-nvme-ple.md`), so expect a 10-15 minute startup window, not a few seconds.
-- **Traefik** in the homelab K8s cluster terminates TLS and routes `dgx.blosshomelab.com` to the DGX Spark's fixed IP on port 8000. The manifests that actually do this live in the `home-server` GitOps repo (`kubernetes/apps/ml/dgx-vllm/`, Flux-managed) - `k8s/` in *this* repo is an illustrative example only, kept for reference, not applied anywhere.
+- **Traefik** in the homelab K8s cluster terminates TLS and routes `dgx.blosshomelab.com` to the DGX Spark's fixed IP on port 8000. The manifests that actually do this live in the `home-server` GitOps repo (`kubernetes/apps/ml/dgx-llama-cpp/`, Flux-managed); this repo carries no Kubernetes manifests.
 - The endpoint has no API key auth - access is scoped by network/Traefik routing, not by a bearer token.
 
 ---
@@ -71,7 +71,7 @@ sudo systemctl enable --now dgx-llm-server.service
 
 **4. Apply the K8s manifests:**
 
-The manifests that actually route `dgx.blosshomelab.com` live in the `home-server` GitOps repo (`kubernetes/apps/ml/dgx-vllm/`), applied automatically by Flux. `k8s/` in *this* repo is an illustrative example only - useful as a reference for what the real ones look like, but not something you `kubectl apply` here. To change routing, DGX Spark IP, or Prometheus scraping, edit the files in `home-server` instead.
+The manifests that actually route `dgx.blosshomelab.com` live in the `home-server` GitOps repo (`kubernetes/apps/ml/dgx-llama-cpp/`), applied automatically by Flux. To change routing, DGX Spark IP, or Prometheus scraping, edit the files in `home-server` instead.
 
 **5. Add `HF_TOKEN` as a GitHub Actions secret** (repo → Settings → Secrets and variables → Actions → New repository secret). Required to download the model from HuggingFace during the GitOps sync - the `sglang-server` container itself never talks to HuggingFace (`HF_HUB_OFFLINE=1`).
 
@@ -180,7 +180,6 @@ While it is active, only `/v1/models`, `/models`, `/health`, `/metrics`, `/runni
 | `llama-swap/config.yaml` | llama-swap models, groups, boot preload; reloaded on change |
 | `llama-swap/Dockerfile` | llama-swap on the `docker:27-cli` image, so it can drive compose |
 | `models/models.json` | GitOps manifest: HuggingFace repo (and optional quant filter) for the model |
-| `k8s/*.yaml` | Illustrative examples only - not applied anywhere. The real manifests (Service, IngressRoute/HTTPRoute, ServiceMonitor) live in `home-server`'s `kubernetes/apps/ml/dgx-vllm/`, Flux-managed. |
 | `.github/workflows/sync-models.yml` | GitOps workflow (runs on DGX Spark self-hosted runner) |
 | `scripts/sync_models.py` | Downloads the model repo (filtered by `allow_patterns` if set), removes obsolete ones |
 | `scripts/benchmark.py` | Lightweight single-stream benchmark (TTFT/TTFAT/tok-per-sec) for the repo's three fixed prompt profiles |
