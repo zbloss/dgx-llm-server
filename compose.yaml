@@ -14,9 +14,9 @@ services:
       - GATE_ADMIN_LISTEN=127.0.0.1:8001
       - GATE_UPSTREAM=127.0.0.1:8080
       - HOLD_TTL_SECONDS=1800
-      # llama-swap `generation` group members, comma-separated. Empty until
-      # ai-grifting's generation compose file lands (see llama-swap/config.yaml).
-      - GENERATION_MODELS=
+      # llama-swap `generation` group members, comma-separated: let through
+      # during a Window hold (see llama-swap/config.yaml).
+      - GENERATION_MODELS=comfyui,qa
     command: ["python", "-u", "/gate.py"]
 
   llama-swap:
@@ -32,6 +32,8 @@ services:
       # Mounted at its host path so `docker compose` inside resolves the
       # project identically, and -watch-config sees the workflow's copies.
       - /home/zbloss/Projects/dgx-llm-server:/home/zbloss/Projects/dgx-llm-server:ro
+      # ai-grifting's generation compose file, for the `generation` group.
+      - /home/zbloss/Projects/ai-grifting:/home/zbloss/Projects/ai-grifting:ro
     command:
       - -config
       - /home/zbloss/Projects/dgx-llm-server/llama-swap/config.yaml
