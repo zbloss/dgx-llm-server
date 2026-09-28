@@ -67,8 +67,12 @@ jobs:
           cp $GITHUB_WORKSPACE/compose.yaml .
           mkdir -p gate llama-swap
           cp $GITHUB_WORKSPACE/gate/gate.py gate/
-          # Copied in place, so llama-swap's -watch-config picks up edits.
-          cp $GITHUB_WORKSPACE/llama-swap/* llama-swap/
+          # llama-swap's -watch-config reloads on any mtime change, and a
+          # reload restarts every running model (~12 min for Flash-Next).
+          # Copy only files whose content changed.
+          for f in $GITHUB_WORKSPACE/llama-swap/*; do
+            cmp -s "$f" "llama-swap/$(basename "$f")" || cp "$f" llama-swap/
+          done
 
           # One-time cutover step (ADR 0019): remove a pre-llama-swap
           # sglang-server - it holds :8000 and restarts itself. Idempotent:
