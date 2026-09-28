@@ -19,6 +19,12 @@ macros:
     docker compose -p dgx-llm-server
     -f /home/zbloss/Projects/dgx-llm-server/compose.yaml
     --profile managed
+  # ai-grifting's generation group (ComfyUI + QA). The ai-grifting repo is mounted
+  # at its host path too; its deploy/.env on the Spark supplies the host paths.
+  generation: >-
+    docker compose -p ai-grifting-generation
+    -f /home/zbloss/Projects/ai-grifting/deploy/generation.compose.yaml
+    --profile managed
 
 # ADR 0003, restated: never scrape a path that can start a model. Prometheus
 # scrapes /upstream/qwen3.8-flash-next/metrics; this makes that path proxy
@@ -41,19 +47,46 @@ models:
     # docker stop gives SGLang its own 10s grace; allow for that plus compose.
     unloadTimeout: 60
 
+  # The generation group (ai-grifting#30). The Temporal GPU worker on the Spark
+  # reaches both via /upstream/<id>/… on 127.0.0.1:8080. ComfyUI's /prompt is
+  # async, so nothing is in flight mid-render: the Window hold, not llama-swap,
+  # keeps the LLM from evicting it. ttl 0: only a swap frees their memory.
+  comfyui:
+    cmd: ${generation} up --no-log-prefix comfyui
+    cmdStop: ${generation} stop comfyui
+    proxy: http://127.0.0.1:8188
+    checkEndpoint: /system_stats
+    ttl: 0
+    unloadTimeout: 60
+    unlisted: true
+  qa:
+    # `up qa` also starts qa-judge (Qwen-Image-Bench), which qa depends on.
+    cmd: ${generation} up --no-log-prefix qa
+    cmdStop: ${generation} stop qa qa-judge
+    proxy: http://127.0.0.1:8189
+    checkEndpoint: /health
+    ttl: 0
+    unloadTimeout: 60
+    unlisted: true
+
 routing:
   router:
     use: group
     settings:
       groups:
-        # The `generation` group (ComfyUI + QA, exclusive with llm, ttl 0)
-        # is added once ai-grifting deploys its compose file on the Spark;
-        # its members must also be listed in the gate's GENERATION_MODELS.
         llm:
           swap: true
           exclusive: true
           members:
             - qwen3.8-flash-next
+        # ComfyUI and QA run together (swap: false) and evict llm (exclusive).
+        # Members must also be listed in the gate's GENERATION_MODELS.
+        generation:
+          swap: false
+          exclusive: true
+          members:
+            - comfyui
+            - qa
 
 hooks:
   on_startup:
