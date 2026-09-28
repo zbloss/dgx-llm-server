@@ -1,6 +1,6 @@
 # ADR 0019: llama-swap front door with a Window-hold gate
 
-**Status:** Accepted — unverified pending deploy
+**Status:** Accepted — deployed and verified on the Spark 2026-09-28 (see Cutover verification); boot-preload retry added after that verification
 **Date:** 2026-09-27
 **Supersedes:** ADR 0016's "one resident model, no swap-by-name" clause only (its SGLang, checkpoint and PLE-offload decisions stand)
 **Amends:** ADR 0018 (mem-watchdog targets containers by label); restates ADR 0003's constraint
@@ -32,7 +32,7 @@ All of them use `network_mode: host`.
 
 **Restart policies.** The gate, llama-swap and mem-watchdog are `unless-stopped`. Every managed service is `no`.
 
-**Boot and timeouts.** `hooks.on_startup.preload: [qwen3.8-flash-next]`. `healthCheckTimeout: 3600`. `sendLoadingState: false`, so clients just block through the ~10-minute warm start, as they did after an SGLang restart before. The gate's upstream timeout (3900s) is longer than that.
+**Boot and timeouts.** `hooks.on_startup.preload: [qwen3.8-flash-next]`, backed up by the `flash-next-warm` sidecar (see Consequences). `healthCheckTimeout: 3600`. `sendLoadingState: false`, so clients just block through the ~10-minute warm start, as they did after an SGLang restart before. The gate's upstream timeout (3900s) is longer than that.
 
 **Window hold (the gate).** The gate keeps an in-memory lease with a 30-minute TTL.
 - Admin API on `127.0.0.1:8001` only:
@@ -79,18 +79,19 @@ This relaxes the "only `compose.yaml` is distributed" precedent of ADR 0016/0018
 - A gate restart during a window drops the hold until the next heartbeat. Keep the heartbeat interval well under the 30-minute TTL; the gap is heartbeat-bounded.
 - The Docker socket is now mounted in two containers (llama-swap, mem-watchdog). The risk is the same root-equivalent class ADR 0018 accepted, and it is still homelab-only.
 - The watchdog's recovery is no longer "restart itself". It is "the next request relaunches". If no client is calling, Flash-Next stays down after a kill until something asks for it.
-- `docker compose up -d --remove-orphans` must not treat the inactive-profile `sglang-server` as an orphan. Compose v2 excludes disabled-profile services from orphan detection, but that isn't verified on the Spark's compose version. Check it during the cutover.
+- `docker compose up -d --remove-orphans` must not treat the inactive-profile `sglang-server` as an orphan. Verified on the Spark's compose (v5.0.2) before the cutover: a throwaway project kept its inactive-profile container running.
 - Verified locally before merge:
   - Gate unit and HTTP tests (`tests/test_gate.py`).
   - The real v260 binary: `-validate` on `llama-swap/config.yaml`.
   - An end-to-end run of the real llama-swap and gate, with a fake SGLang standing in for the managed service. It covered boot preload, relaunch after `kill -9`, the metrics path proxying when loaded and returning `409` without a start when not, and the hold giving `503` + `Retry-After` then `200` after release.
   - A mem-watchdog dry run against a mocked `/proc/meminfo`.
   - None of it touched docker or the Spark.
-- **Cutover verification** (on a night with no Generation window):
-  1. `/v1/models` via `dgx.blosshomelab.com`.
-  2. A chat request.
-  3. The Prometheus targets, both loaded and unloaded.
-  4. A hold gives `503` externally, then `200` once released.
-  5. `docker kill` of the labelled container is followed by a relaunch on the next request.
-  6. After a reboot, Flash-Next preloads.
+- **Cutover verification**, run on the Spark on 2026-09-28 (no Generation window yet):
+  1. **Pass.** `/v1/models` via `dgx.blosshomelab.com` lists `qwen3.8-flash-next`.
+  2. **Pass.** Chat works end to end (2.3s through the gate on an uncontended request). Flash-Next was saturated at its 8-request ceiling right after load; see dgx-llm-server#45.
+  3. **Pass.** Prometheus has both targets `up` (`/upstream/qwen3.8-flash-next/metrics`, 88 `sglang_*` series; llama-swap `/metrics`). While the model was down from 00:34 to 00:39, the 30s scrapes did not start it.
+  4. **Pass.** A hold gives `503` + `Retry-After: 1800` externally while `/v1/models` stays `200`; the admin port can't be reached from the LAN; chat returns `200` once the hold is released.
+  5. **Pass.** `docker kill` by label: llama-swap logged "upstream process exited unexpectedly", and the next client request recreated `sglang-server`. One retry landed in the ~1s before llama-swap noticed the exit and got a `502`.
+  6. **Partial.** After a reboot, the gate, llama-swap and mem-watchdog came back and llama-swap logged `preloading model`. But SGLang crashed ~10 min into that load, in its FlashInfer autotune warm-up (`CUDA error: operation not permitted`; no Xid, the same autotune cache as every good load). A retry with an identical config came up healthy, so the crash is intermittent in the dev image. The preload hook doesn't retry, and `sglang-server` is `restart: "no"`, so the LLM stayed down until something asked for it. This is a regression from `restart: unless-stopped`.
+- **Boot-preload retry (`flash-next-warm`), added for item 6.** A `docker:27-cli` sidecar (`unless-stopped`) runs on every start, boot included. It waits for llama-swap, then warms Flash-Next through `/upstream/qwen3.8-flash-next/health`, with up to 3 attempts 30s apart, and then idles. It never warms during a Window hold, and it never re-warms later, so it can't fight the generation group for the GPU. Tested in the real image against a fake llama-swap: it retries after failures, gives up after 3, and skips during a hold. Root cause of the SGLang crash: open, upstream.
 - **Rollback:** revert the PR and let GitOps restore the always-on `sglang-server`. If `:8000` conflicts while orphans are removed, run `docker compose down && docker compose up -d` by hand.

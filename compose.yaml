@@ -101,6 +101,42 @@ services:
               count: all
               capabilities: [gpu]
 
+  flash-next-warm:
+    # ADR 0019: llama-swap's boot preload runs once and never retries, and
+    # sglang-server is restart "no". A one-off crash during a cold load
+    # (seen after a reboot: CUDA "operation not permitted" in the FlashInfer
+    # autotune warm-up, fine on retry) would leave the LLM down until some
+    # client happened to call. This retries the warm on every start of this
+    # container (boot included), then idles. It never warms during a Window
+    # hold, and never re-warms later, so it can't fight the generation group.
+    image: docker:27-cli
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - LLAMA_SWAP=http://127.0.0.1:8080
+      - HOLD_URL=http://127.0.0.1:8001/hold
+      - MODEL=qwen3.8-flash-next
+      - ATTEMPTS=3
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        until wget -q -O /dev/null "$$LLAMA_SWAP/health"; do sleep 5; done;
+        attempt=1;
+        while [ "$$attempt" -le "$$ATTEMPTS" ]; do
+          if wget -q -O - "$$HOLD_URL" 2>/dev/null | grep -q '"active": true'; then
+            echo "[flash-next-warm] Window hold active - not warming";
+            break;
+          fi;
+          if wget -q -T 3700 -O /dev/null "$$LLAMA_SWAP/upstream/$$MODEL/health"; then
+            echo "[flash-next-warm] $$MODEL ready";
+            break;
+          fi;
+          echo "[flash-next-warm] warm attempt $$attempt/$$ATTEMPTS failed";
+          attempt=$$((attempt + 1));
+          sleep 30;
+        done;
+        exec sleep 2147483647
+
   mem-watchdog:
     # ADR 0018 (amended by ADR 0019): SGLang's DGX Spark cookbook notes that
     # unified-memory exhaustion "can take the whole box down and needs a

@@ -1,6 +1,6 @@
 # ADR 0018: Host-side memory watchdog for unified-memory exhaustion
 
-**Status:** Accepted — unverified pending deploy; amended by ADR 0019 (targets containers by label; recovery is llama-swap relaunching on the next request)
+**Status:** Accepted — label-kill recovery verified on the Spark 2026-09-28 (manual `docker kill` by label, ADR 0019); the memory-threshold trigger itself has not fired in production; amended by ADR 0019 (targets containers by label; recovery is llama-swap relaunching on the next request)
 **Date:** 2026-09-16
 **Amends:** ADR 0016 (closes the memory-watchdog gap flagged there but never built); resolves wayfinder map [#28](https://github.com/zbloss/dgx-llm-server/issues/28) ticket [#38](https://github.com/zbloss/dgx-llm-server/issues/38)
 
