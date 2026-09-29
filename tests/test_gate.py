@@ -70,6 +70,17 @@ class FakeLlamaSwap(BaseHTTPRequestHandler):
     release_second_event = threading.Event()
 
     def _handle(self) -> None:
+        if self.headers.get("Upgrade", "").lower() == "websocket":
+            # Accept the upgrade, then echo raw bytes until the client closes.
+            self.send_response(101)
+            self.send_header("Upgrade", "websocket")
+            self.send_header("Connection", "Upgrade")
+            self.end_headers()
+            self.wfile.flush()
+            self.close_connection = True
+            while data := self.request.recv(1024):
+                self.request.sendall(data)
+            return
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length)
         FakeLlamaSwap.seen.append((self.command, self.path, body))
@@ -292,3 +303,40 @@ def test_a_non_string_model_is_refused_during_a_hold(gate):
     resp = gate.request("POST", "/v1/chat/completions", {"model": ["a", "b"]})
     assert resp.status == 503
     resp.read()
+
+
+def _websocket_handshake(port: int, path: str) -> tuple[socket.socket, bytes]:
+    sock = socket.create_connection(("127.0.0.1", port), timeout=5)
+    sock.sendall(
+        f"GET {path} HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n"
+        "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n".encode()
+    )
+    response = b""
+    while b"\r\n\r\n" not in response:
+        response += sock.recv(1024)
+    return sock, response
+
+
+def test_websocket_upgrades_are_tunnelled_to_llama_swap(gate):
+    sock, response = _websocket_handshake(gate.public_port, "/upstream/comfyui/ws")
+    assert response.startswith(b"HTTP/1.1 101")
+
+    sock.sendall(b"ping")
+    assert sock.recv(1024) == b"ping"
+    sock.close()
+
+
+def test_websocket_upgrades_to_the_llm_are_refused_during_a_hold(gate):
+    gate.request("POST", "/hold", admin=True)
+
+    sock, response = _websocket_handshake(gate.public_port, "/upstream/qwen3.8-flash-next/ws")
+    assert response.startswith(b"HTTP/1.1 503")
+    sock.close()
+
+
+def test_websocket_upgrades_to_generation_models_pass_during_a_hold(gate):
+    gate.request("POST", "/hold", admin=True)
+
+    sock, response = _websocket_handshake(gate.public_port, "/upstream/comfyui/ws")
+    assert response.startswith(b"HTTP/1.1 101")
+    sock.close()
