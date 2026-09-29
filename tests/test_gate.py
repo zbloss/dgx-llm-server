@@ -159,6 +159,7 @@ def gate() -> Iterator[Gate]:
         hold=hold,
         generation_models={GENERATION},
         upstream_timeout=0.5,
+        host_prefixes={"comfyui.test": "/upstream/comfyui"},
     )
     _serve(public)
     _serve(admin)
@@ -340,3 +341,33 @@ def test_websocket_upgrades_to_generation_models_pass_during_a_hold(gate):
     sock, response = _websocket_handshake(gate.public_port, "/upstream/comfyui/ws")
     assert response.startswith(b"HTTP/1.1 101")
     sock.close()
+
+
+def _get_with_host(gate, host, path):
+    conn = http.client.HTTPConnection("127.0.0.1", gate.public_port, timeout=5)
+    conn.request("GET", path, headers={"Host": host})
+    return conn.getresponse()
+
+
+def test_a_prefixed_host_is_sent_to_its_model_keeping_the_raw_path(gate):
+    _get_with_host(gate, "comfyui.test", "/api/userdata/workflows%2Fa.json?overwrite=true").read()
+
+    assert FakeLlamaSwap.seen[-1][1] == "/upstream/comfyui/api/userdata/workflows%2Fa.json?overwrite=true"
+
+
+def test_other_hosts_are_not_prefixed(gate):
+    _get_with_host(gate, "dgx.test", "/v1/models").read()
+
+    assert FakeLlamaSwap.seen[-1][1] == "/v1/models"
+
+
+def test_a_prefixed_host_to_a_generation_model_passes_a_hold(gate):
+    gate.request("POST", "/hold", admin=True)
+
+    assert _get_with_host(gate, "comfyui.test", "/anything").status == 200
+
+
+def test_an_already_prefixed_path_is_not_prefixed_twice(gate):
+    _get_with_host(gate, "comfyui.test", "/upstream/comfyui/api/queue").read()
+
+    assert FakeLlamaSwap.seen[-1][1] == "/upstream/comfyui/api/queue"

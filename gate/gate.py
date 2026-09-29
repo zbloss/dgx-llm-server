@@ -122,12 +122,19 @@ def make_servers(
     hold: Hold,
     generation_models: set[str],
     upstream_timeout: float = UPSTREAM_TIMEOUT_SECONDS,
+    host_prefixes: dict[str, str] | None = None,
 ) -> tuple[ThreadingHTTPServer, ThreadingHTTPServer]:
     class Public(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
         def _handle(self) -> None:
             body = _read_body(self)
+            prefix = (host_prefixes or {}).get(self.headers.get("Host", "").split(":")[0].lower())
+            if prefix and not (self.path == prefix or self.path.startswith(prefix.rstrip("/") + "/")):
+                # A host that fronts one model at its root (comfyui.blosshomelab.com). Done here
+                # on the raw path: a proxy's path rewrite decodes %2F, which breaks ComfyUI's
+                # userdata routes (saving a workflow).
+                self.path = prefix.rstrip("/") + self.path
             if hold.active() and not allowed_during_hold(_path(self), body, generation_models):
                 error = {"message": "Window hold active: the LLM is unavailable", "type": "window_hold"}
                 _send_json(self, 503, {"error": error}, {"Retry-After": str(max(1, hold.remaining()))})
@@ -221,6 +228,12 @@ def _addr(value: str) -> tuple[str, int]:
     return host, int(port)
 
 
+def _host_prefixes(value: str) -> dict[str, str]:
+    """`host=/prefix,host2=/prefix2`."""
+    pairs = (item.split("=", 1) for item in value.split(",") if item)
+    return {host.strip().lower(): prefix.strip() for host, prefix in pairs}
+
+
 def main() -> None:
     generation = {m for m in os.environ.get("GENERATION_MODELS", "").split(",") if m}
     public, admin = make_servers(
@@ -229,6 +242,7 @@ def main() -> None:
         admin_addr=_addr(os.environ.get("GATE_ADMIN_LISTEN", "127.0.0.1:8001")),
         hold=Hold(ttl=float(os.environ.get("HOLD_TTL_SECONDS", "1800"))),
         generation_models=generation,
+        host_prefixes=_host_prefixes(os.environ.get("GATE_HOST_PREFIXES", "")),
     )
     threading.Thread(target=admin.serve_forever, daemon=True).start()
     print(f"gate: public {public.server_address}, admin {admin.server_address}, generation models {sorted(generation)}", flush=True)
