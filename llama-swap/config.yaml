@@ -57,6 +57,8 @@ models:
     proxy: http://127.0.0.1:8188
     checkEndpoint: /system_stats
     ttl: 0
+    # The UI loads ~100 assets at once; the default of 10 answers the rest 429.
+    concurrencyLimit: 200
     unloadTimeout: 60
     unlisted: true
   qa:
