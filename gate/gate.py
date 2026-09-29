@@ -13,6 +13,7 @@ import http.client
 import json
 import math
 import os
+import socket
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -30,6 +31,20 @@ NOT_FORWARDED = {
 # Longer than llama-swap's healthCheckTimeout (3600s): a cold start blocks the
 # request, it doesn't fail it.
 UPSTREAM_TIMEOUT_SECONDS = 3900
+
+
+def _pipe(source: socket.socket, sink: socket.socket) -> None:
+    """Copies bytes until `source` closes, then half-closes `sink`."""
+    try:
+        while data := source.recv(65536):
+            sink.sendall(data)
+    except OSError:
+        pass
+    finally:
+        try:
+            sink.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
 
 
 class Hold:
@@ -117,7 +132,32 @@ def make_servers(
                 error = {"message": "Window hold active: the LLM is unavailable", "type": "window_hold"}
                 _send_json(self, 503, {"error": error}, {"Retry-After": str(max(1, hold.remaining()))})
                 return
-            self._proxy(body)
+            if self.headers.get("Upgrade", "").lower() == "websocket":
+                self._tunnel()
+            else:
+                self._proxy(body)
+
+        def _tunnel(self) -> None:
+            """WebSocket (ComfyUI's UI): replay the handshake upstream, then relay
+            raw bytes both ways until either side closes."""
+            try:
+                upstream_sock = socket.create_connection(_addr(upstream), timeout=10)
+            except OSError as e:
+                self.send_error(502, f"llama-swap unreachable: {e}")
+                return
+            upstream_sock.settimeout(None)
+            self.close_connection = True
+            lines = [f"{self.command} {self.path} HTTP/1.1"]
+            lines += [f"{k}: {v}" for k, v in self.headers.items() if k.lower() != "x-forwarded-for"]
+            lines.append(f"X-Forwarded-For: {self.client_address[0]}")
+            try:
+                upstream_sock.sendall(("\r\n".join(lines) + "\r\n\r\n").encode())
+                back = threading.Thread(target=_pipe, args=(upstream_sock, self.connection), daemon=True)
+                back.start()
+                _pipe(self.connection, upstream_sock)
+                back.join()
+            finally:
+                upstream_sock.close()
 
         def _proxy(self, body: bytes) -> None:
             headers = {k: v for k, v in self.headers.items() if k.lower() not in NOT_FORWARDED}
