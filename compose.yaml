@@ -17,6 +17,8 @@ services:
       # llama-swap `generation` group members, comma-separated: let through
       # during a Window hold (see llama-swap/config.yaml).
       - GENERATION_MODELS=comfyui,qa
+      # Hosts that front one model at their root; the gate prefixes the path (comfyui.blosshomelab.com).
+      - GATE_HOST_PREFIXES=comfyui.blosshomelab.com=/upstream/comfyui
     command: ["python", "-u", "/gate.py"]
 
   llama-swap:
