@@ -6,30 +6,16 @@ on:
     paths:
       - models/models.json
       - compose.yaml
-      - gate/gate.py
-      - llama-swap/**
   workflow_dispatch:
 
 jobs:
   sync:
-    name: Sync model files and apply the stack
+    name: Sync model files and restart server
     runs-on: [self-hosted, dgx-spark]
 
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Wait out any active Window hold
-        # ADR 0019: first, so nothing here (downloads, restarting the gate or
-        # llama-swap, warming Flash-Next) runs during a Generation window.
-        # Defer until the hold is released or lapses. Before the first
-        # cutover there is no gate on :8001, which counts as no hold.
-        timeout-minutes: 300
-        run: |
-          while curl -sf http://127.0.0.1:8001/hold | grep -q '"active": true'; do
-            echo "Window hold active - retrying in 5 minutes"
-            sleep 300
-          done
+        uses: actions/checkout@v4
 
       - name: Install uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
@@ -56,59 +42,5 @@ jobs:
       - name: Apply compose changes
         working-directory: /home/zbloss/Projects/dgx-llm-server
         run: |
-          old_hash=$(docker compose --profile managed config --hash sglang-server 2>/dev/null || true)
-          echo "OLD_SGLANG_HASH=$old_hash" >> "$GITHUB_ENV"
-
-          # gate.py is bind-mounted, so compose won't see a change to it:
-          # restart the gate explicitly when it differs.
-          gate_changed=false
-          cmp -s $GITHUB_WORKSPACE/gate/gate.py gate/gate.py || gate_changed=true
-
           cp $GITHUB_WORKSPACE/compose.yaml .
-          mkdir -p gate llama-swap
-          cp $GITHUB_WORKSPACE/gate/gate.py gate/
-          # llama-swap's -watch-config reloads on any mtime change, and a
-          # reload restarts every running model (~12 min for Flash-Next).
-          # Copy only files whose content changed.
-          for f in $GITHUB_WORKSPACE/llama-swap/*; do
-            cmp -s "$f" "llama-swap/$(basename "$f")" || cp "$f" llama-swap/
-          done
-
-          # One-time cutover step (ADR 0019): remove a pre-llama-swap
-          # sglang-server - it holds :8000 and restarts itself. Idempotent:
-          # a llama-swap-managed one carries the label and is left alone.
-          for c in $(docker ps -aq --filter label=com.docker.compose.project=dgx-llm-server --filter label=com.docker.compose.service=sglang-server); do
-            if [ "$(docker inspect -f '{{index .Config.Labels "llama-swap.managed"}}' "$c")" != "true" ]; then
-              echo "Removing unmanaged sglang-server container $c"
-              docker rm -f "$c"
-              # llama-swap's boot preload starts the new one; don't unload it
-              # mid-load just to warm it again.
-              echo "CUTOVER=true" >> "$GITHUB_ENV"
-            fi
-          done
-
-          # sglang-server is under `profiles: [managed]`, so this only
-          # touches the gate, llama-swap and mem-watchdog.
-          docker compose up -d --build --remove-orphans
-          if [ "$gate_changed" = true ]; then docker compose restart gate; fi
-
-      - name: Relaunch Flash-Next if its definition changed
-        working-directory: /home/zbloss/Projects/dgx-llm-server
-        run: |
-          new_hash=$(docker compose --profile managed config --hash sglang-server)
-          if [ "$new_hash" = "$OLD_SGLANG_HASH" ] || [ "$CUTOVER" = true ]; then
-            echo "sglang-server unchanged (or just preloaded by cutover) - leaving the model alone"
-            exit 0
-          fi
-          # A hold may have opened since the wait step; the Generation
-          # window warms Flash-Next itself when it ends.
-          if curl -sf http://127.0.0.1:8001/hold | grep -q '"active": true'; then
-            echo "::warning::Window hold opened mid-deploy - skipping the relaunch; the Generation window warms Flash-Next when it releases"
-            exit 0
-          fi
-          echo "sglang-server changed - unloading and warming qwen3.8-flash-next"
-          # llama-swap may still be coming up after a recreate.
-          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8080/health && break; sleep 2; done
-          curl -sf -X POST http://127.0.0.1:8080/api/models/unload/qwen3.8-flash-next
-          # Blocks through the ~10 min PLE rebuild (healthCheckTimeout 3600).
-          curl -sf --max-time 3700 http://127.0.0.1:8080/upstream/qwen3.8-flash-next/health
+          docker compose up -d --remove-orphans
