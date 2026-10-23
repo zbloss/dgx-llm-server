@@ -71,7 +71,7 @@ services:
         --tool-call-parser qwen3_xml
         --enable-auto-tool-choice
         --compilation-config '{"pass_config":{"fuse_act_quant":true}}'
-        --gpu-memory-utilization 0.75
+        --gpu-memory-utilization 0.8
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8000/v1/models || exit 1"]
       interval: 30s
@@ -102,16 +102,27 @@ services:
     environment:
       - MEM_AVAILABLE_MIN_KB=4194304
       - TARGET_CONTAINER=dgx-llm-server-vllm-server-1
-      - POLL_INTERVAL_SECONDS=10
+      - POLL_INTERVAL_SECONDS=2
+      # Startup (b12x autotune) dips MemAvailable below the threshold for a
+      # few seconds and recovers on its own (seen 2026-10-23: 1.8 GiB, back
+      # to 42 GiB six seconds later). Only act on a sustained shortfall.
+      - CONSECUTIVE_LOW_SAMPLES=3
       - COOLDOWN_SECONDS=120
     entrypoint: ["sh", "-c"]
     command:
       - >-
+        low=0;
         while true; do
           avail_kb=$$(awk '/MemAvailable/ {print $$2}' /host/proc/meminfo);
           if [ "$$avail_kb" -lt "$$MEM_AVAILABLE_MIN_KB" ]; then
-            echo "$$(date -u +%Y-%m-%dT%H:%M:%SZ) [mem-watchdog] MemAvailable=$${avail_kb}KB below threshold=$${MEM_AVAILABLE_MIN_KB}KB - restarting $$TARGET_CONTAINER";
+            low=$$((low + 1));
+          else
+            low=0;
+          fi;
+          if [ "$$low" -ge "$$CONSECUTIVE_LOW_SAMPLES" ]; then
+            echo "$$(date -u +%Y-%m-%dT%H:%M:%SZ) [mem-watchdog] MemAvailable=$${avail_kb}KB below threshold=$${MEM_AVAILABLE_MIN_KB}KB for $${low} samples - restarting $$TARGET_CONTAINER";
             docker restart -t 0 "$$TARGET_CONTAINER" || echo "docker restart failed";
+            low=0;
             sleep "$$COOLDOWN_SECONDS";
           fi;
           sleep "$$POLL_INTERVAL_SECONDS";
