@@ -36,3 +36,10 @@ The first start was killed by `mem-watchdog` at 12:36 (`MemAvailable` 3.5 GB, ju
 - `mem-watchdog` now runs `docker restart -t 0` instead of `docker kill`, so a trip self-heals. Risk: if startup dips below the threshold every time, it restarts in a loop (one attempt per `COOLDOWN_SECONDS` + startup).
 - `--gpu-memory-utilization` 0.8 -> 0.75 for ~6 GiB more host headroom. Expected cost: KV cache shrinks from ~18 GiB to roughly 12 GiB (about 2x concurrency at full 262144 context instead of 3.65x). Unmeasured; revisit after the next start.
 - Image pinned to digest `sha256:03a956544e9f9b4b7ba91690469fbe7848bdbef29a7d2e0f5788368467bb3595` (the build that was verified) instead of `:latest`.
+
+### Amendment: second deploy (PR #54) and follow-up
+
+The PR #54 deploy tripped the watchdog on its first attempt (2.2 GiB at 14:28:15, ~40 s after weights loaded) and `docker restart` brought the container back on its own; the second attempt dipped to 1.8 GiB for under 10 s, was not sampled by the 10 s poll, and passed. With the b12x autotune cache now populated, startup took ~4 minutes instead of ~14 and the autotune logged `0 compilations`. The cache persists across restarts.
+
+- Dips last seconds and recover without intervention, so a single low sample is not an exhaustion. The watchdog now polls every 2 s and acts only after 3 consecutive samples below the threshold (~6 s sustained). Tested against a mocked `/proc/meminfo`: a 2-sample dip does nothing, a sustained shortfall restarts once, isolated low samples do nothing.
+- `--gpu-memory-utilization` returns to 0.8. The 0.75 setting did not prevent the post-weights dip (it happens before the KV cache is allocated) and cost a third of the KV cache: 11.79 GiB / 627,319 tokens / 2.39x at 0.75, versus 18.01 GiB / 957,934 tokens / 3.65x at 0.8. 0.8 is also roughly the ceiling with the 4 GiB threshold on a cold-cache start: the GDN-prefill autotune bottomed at ~7.5 GiB there, so 0.85 would be expected to trip.
