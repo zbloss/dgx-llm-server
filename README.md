@@ -8,9 +8,9 @@ Serves a quantized LLM from a DGX Spark over the local network via an OpenAI-com
 
 ## How it works
 
-- **A single SGLang server** (`lmsysorg/sglang:dev-qwen38-next-local`) serves `RadixArk/Qwen3.8-Flash-Next-NVFP4` on port 8000. There is no model-swap-by-name - one model, always resident.
+- **A single vLLM server** (`eugr/spark-vllm-b12x:latest`, a community build - the checkpoint needs b12x kernels not yet in upstream vLLM) serves `nvidia/Qwen3.8-Flash-Next-FP4-Local` as `qwen3.8-flash-next` on port 8000. There is no model-swap-by-name - one model, always resident.
 - **`models/models.json`** is the GitOps manifest: push a change here and the self-hosted GitHub Actions runner on the DGX Spark downloads the new HuggingFace repo, removes the obsolete one, and restarts the stack.
-- **`compose.yaml`** carries the SGLang launch flags (context length, batching, PLE-table NVMe offload, tool/reasoning parsers) - edit it directly to retune the model. The container's `entrypoint` is overridden to delete and repopulate the ~47.7GB PLE table on every start (see `docs/adr/0016-qwen38-flash-next-sglang-nvme-ple.md`), so expect a 10-15 minute startup window, not a few seconds.
+- **`compose.yaml`** carries the vLLM launch flags and the b12x/PLE-to-disk environment (copied from the model card's DGX Spark recipe, see `docs/adr/0019-vllm-b12x-fp4-local.md`) - edit it directly to retune the model. Expect a long first start (AOT compile, PLE table to disk); the healthcheck allows 15 minutes.
 - **Traefik** in the homelab K8s cluster terminates TLS and routes `dgx.blosshomelab.com` to the DGX Spark's fixed IP on port 8000. The manifests that actually do this live in the `home-server` GitOps repo (`kubernetes/apps/ml/dgx-vllm/`, Flux-managed) - `k8s/` in *this* repo is an illustrative example only, kept for reference, not applied anywhere.
 - The endpoint has no API key auth - access is scoped by network/Traefik routing, not by a bearer token.
 
@@ -36,9 +36,9 @@ Follow the instructions, and when prompted for labels add `dgx-spark`.
 ```bash
 docker compose up -d
 ```
-Watch progress as the model loads (expect 10-15 minutes while the PLE table repopulates):
+Watch progress as the model loads (expect a long first start while kernels compile):
 ```bash
-docker compose logs -f sglang-server
+docker compose logs -f vllm-server
 ```
 
 **3. Enable the systemd service so the stack starts on boot:**
@@ -46,7 +46,7 @@ docker compose logs -f sglang-server
 Create `/etc/systemd/system/dgx-llm-server.service`:
 ```ini
 [Unit]
-Description=DGX LLM Server (SGLang docker compose stack)
+Description=DGX LLM Server (vLLM docker compose stack)
 Requires=docker.service
 After=docker.service network-online.target
 Wants=network-online.target
@@ -72,7 +72,7 @@ sudo systemctl enable --now dgx-llm-server.service
 
 The manifests that actually route `dgx.blosshomelab.com` live in the `home-server` GitOps repo (`kubernetes/apps/ml/dgx-vllm/`), applied automatically by Flux. `k8s/` in *this* repo is an illustrative example only - useful as a reference for what the real ones look like, but not something you `kubectl apply` here. To change routing, DGX Spark IP, or Prometheus scraping, edit the files in `home-server` instead.
 
-**5. Add `HF_TOKEN` as a GitHub Actions secret** (repo → Settings → Secrets and variables → Actions → New repository secret). Required to download the model from HuggingFace during the GitOps sync - the `sglang-server` container itself never talks to HuggingFace (`HF_HUB_OFFLINE=1`).
+**5. Add `HF_TOKEN` as a GitHub Actions secret** (repo → Settings → Secrets and variables → Actions → New repository secret). Required to download the model from HuggingFace during the GitOps sync - the `vllm-server` container itself never talks to HuggingFace (`HF_HUB_OFFLINE=1`).
 
 **6. Trigger the first model download:**
 
@@ -94,9 +94,9 @@ The GitHub Actions workflow runs on the DGX Spark, downloads the new model, remo
 
 | Served model name | Model | Format | HF repo | GPU |
 |---|---|---|---|---|
-| `qwen3.8-flash-next` | Qwen3.8-Flash-Next (176B/6B-active hybrid MoE) | NVFP4 safetensors | `RadixArk/Qwen3.8-Flash-Next-NVFP4` | full offload, tensor-parallel-size 1, PLE table offloaded to local NVMe |
+| `qwen3.8-flash-next` | Qwen3.8-Flash-Next (176B/6B-active hybrid MoE) | FP4-Local (`modelopt_mixed`) safetensors | `nvidia/Qwen3.8-Flash-Next-FP4-Local` | tensor-parallel-size 1, `gpu-memory-utilization 0.8`, FP8 KV cache, PLE table on disk |
 
-No speculative decoding in this first pass (SGLang's MTP-equivalent, `--speculative-algorithm NEXTN`, has unverified required sub-flags), `auto`-resolved reasoning/tool-call parsers, `mem-fraction-static 0.85`, 8-request concurrency ceiling (`--max-running-requests 8`). Replaces the prior `qwen3.8-27b`/vLLM stack entirely - the model doesn't fit in 128GB unified memory alongside anything else. See `docs/adr/0016-qwen38-flash-next-sglang-nvme-ple.md` for the full reasoning, including why this needed a backend switch (`docs/adr/0013-dflash2-speculative-decoding.md` covers the earlier, narrower SGLang-migration question this revisits) and prior `qwen3.8-27b`-era history (`docs/adr/0010`-`0015`).
+MTP speculative decoding (4 tokens), `qwen3` reasoning parser and `qwen3_xml` tool parser, 8-request concurrency ceiling (`--max-num-seqs 8`), 262144 context. Replaced SGLang per `docs/adr/0019-vllm-b12x-fp4-local.md`; earlier history in `docs/adr/0016`-`0018`.
 
 ---
 
@@ -152,7 +152,7 @@ env:
 
 After startup, confirm the model loaded successfully:
 ```bash
-docker compose logs sglang-server | grep -i "error\|loaded weights"
+docker compose logs vllm-server | grep -i "error\|loaded weights"
 curl -s http://localhost:8000/v1/models | jq .
 ```
 
@@ -162,7 +162,7 @@ curl -s http://localhost:8000/v1/models | jq .
 
 | File | Purpose |
 |---|---|
-| `compose.yaml` | Docker Compose: single `sglang-server` container with all SGLang launch flags |
+| `compose.yaml` | Docker Compose: single `vllm-server` container with all vLLM launch flags |
 | `models/models.json` | GitOps manifest: HuggingFace repo (and optional quant filter) for the model |
 | `k8s/*.yaml` | Illustrative examples only - not applied anywhere. The real manifests (Service, IngressRoute/HTTPRoute, ServiceMonitor) live in `home-server`'s `kubernetes/apps/ml/dgx-vllm/`, Flux-managed. |
 | `.github/workflows/sync-models.yml` | GitOps workflow (runs on DGX Spark self-hosted runner) |
